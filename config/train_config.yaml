@@ -1,0 +1,54 @@
+# Configuration for training the Pokemon sprite generator
+
+# Model configuration
+model:
+  text_encoder:
+    vocab_size: 30522  # BERT vocab size
+    embedding_dim: 256
+    num_heads: 8
+    num_layers: 6
+    hidden_dim: 512
+    dropout: 0.1
+    max_seq_length: 128
+  
+  decoder:
+    latent_dim: 256
+    noise_dim: 100
+    image_size: 215
+    num_channels: 3
+    base_channels: 64
+    
+  attention:
+    hidden_dim: 256
+
+# Training configuration
+training:
+  batch_size: 16
+  num_epochs: 5
+  learning_rate: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  weight_decay: 0.0001
+  
+  # Loss weights
+  reconstruction_weight: 1.0
+  attention_weight: 0.1
+  
+  # Checkpoints
+  save_every: 10
+  checkpoint_dir: "checkpoints"
+  
+  # Logging
+  log_every: 100
+  log_dir: "logs"
+
+# Data configuration
+data:
+  dataset_url: "https://github.com/cristobalmitchell/pokedex/"
+  data_dir: "data"
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  
+# Device
+device: "cuda"  # or "cpu"
