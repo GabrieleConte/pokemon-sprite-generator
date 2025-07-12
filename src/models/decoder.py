@@ -35,23 +35,32 @@ class ImageDecoder(nn.Module):
 
         self.attention = Attention(text_embedding_dim, text_embedding_dim)
 
-        self.fc = nn.Linear(decoder_input_dim, 256 * 4 * 4)
+        self.fc = nn.Linear(decoder_input_dim, 512 * 3 * 3)
 
         self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            # State: 256 x 6 x 6
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            # State: 128 x 8 x 8
+            # State: 128 x 12 x 12
             nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            # State: 64 x 16 x 16
+            # State: 64 x 24 x 24
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            # State: 32 x 32 x 32
-            nn.ConvTranspose2d(32, final_image_channels, kernel_size=4, stride=2, padding=1),
-            # Output: 3 x 64 x 64
+            # State: 32 x 48 x 48
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            # State: 16 x 96 x 96
+            nn.ConvTranspose2d(16, final_image_channels, kernel_size=7, stride=2, padding=2),
+            # Output: 3 x 193 x 193
+            nn.Upsample(size=(215, 215), mode='bilinear', align_corners=False),
             nn.Tanh()
         )
 
@@ -75,7 +84,7 @@ class ImageDecoder(nn.Module):
         decoder_input = torch.cat((noise, context_vector), dim=1)
         
         x = self.fc(decoder_input)
-        x = x.view(-1, 256, 4, 4) # Reshape to a 4x4 image with 256 channels
+        x = x.view(-1, 512, 3, 3) # Reshape to a 3x3 image with 512 channels
         
         # Generate the image
         output = self.decoder(x)
