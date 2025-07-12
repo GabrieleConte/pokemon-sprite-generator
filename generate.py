@@ -152,19 +152,11 @@ def main():
     # Create model
     print("Loading model...")
     model = PokemonSpriteGenerator(
-        vocab_size=config['model']['text_encoder']['vocab_size'],
-        embedding_dim=config['model']['text_encoder']['embedding_dim'],
-        num_heads=config['model']['text_encoder']['num_heads'],
-        num_layers=config['model']['text_encoder']['num_layers'],
-        hidden_dim=config['model']['text_encoder']['hidden_dim'],
-        max_seq_length=config['model']['text_encoder']['max_seq_length'],
-        latent_dim=config['model']['decoder']['latent_dim'],
+        model_name=config['model']['text_encoder']['model_name'],
+        text_embedding_dim=config['model']['decoder']['embedding_dim'],
         noise_dim=config['model']['decoder']['noise_dim'],
-        image_size=config['model']['decoder']['image_size'],
-        num_channels=config['model']['decoder']['num_channels'],
-        base_channels=config['model']['decoder']['base_channels'],
-        attention_dim=config['model']['attention']['hidden_dim'],
-        dropout=config['model']['text_encoder']['dropout']
+        nhead=config['model']['text_encoder']['nhead'],
+        num_encoder_layers=config['model']['text_encoder']['num_encoder_layers'],
     )
     
     # Load checkpoint
@@ -173,7 +165,7 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     
-    print(f"Model loaded successfully. Parameters: {model.count_parameters():,}")
+    print(f"Model loaded successfully. Parameters: {list(model.named_parameters()):,}")
     
     # Determine texts to generate
     texts = []

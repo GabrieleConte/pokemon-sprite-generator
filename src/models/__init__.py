@@ -6,13 +6,13 @@ from text descriptions using a transformer-based encoder and CNN decoder.
 """
 
 from .text_encoder import TextEncoder
-from .cnn_decoder import CNNDecoder
+from .decoder import ImageDecoder
 from .attention import AttentionMechanism, MultiHeadAttention, CrossAttention
 from .pokemon_generator import PokemonSpriteGenerator
 
 __all__ = [
     'TextEncoder',
-    'CNNDecoder', 
+    'ImageDecoder', 
     'AttentionMechanism',
     'MultiHeadAttention',
     'CrossAttention',

@@ -194,26 +194,17 @@ def main():
     # Create model
     logger.log("Creating model...")
     model = PokemonSpriteGenerator(
-        vocab_size=config['model']['text_encoder']['vocab_size'],
-        embedding_dim=config['model']['text_encoder']['embedding_dim'],
-        num_heads=config['model']['text_encoder']['num_heads'],
-        num_layers=config['model']['text_encoder']['num_layers'],
-        hidden_dim=config['model']['text_encoder']['hidden_dim'],
-        max_seq_length=config['model']['text_encoder']['max_seq_length'],
-        latent_dim=config['model']['decoder']['latent_dim'],
+        model_name=config['model']['text_encoder']['model_name'],
+        text_embedding_dim=config['model']['decoder']['embedding_dim'],
         noise_dim=config['model']['decoder']['noise_dim'],
-        image_size=config['model']['decoder']['image_size'],
-        num_channels=config['model']['decoder']['num_channels'],
-        base_channels=config['model']['decoder']['base_channels'],
-        attention_dim=config['model']['attention']['hidden_dim'],
-        dropout=config['model']['text_encoder']['dropout']
+        nhead=config['model']['text_encoder']['nhead'],
+        num_encoder_layers=config['model']['text_encoder']['num_encoder_layers'],
     )
     
     model = model.to(device)
     
     # Print model summary
     print_model_summary(model)
-    logger.log(f"Model parameters: {model.count_parameters():,}")
     
     # Create optimizer
     optimizer = optim.AdamW(

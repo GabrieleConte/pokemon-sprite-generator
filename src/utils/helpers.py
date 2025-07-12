@@ -125,7 +125,7 @@ def save_attention_visualization(attention_weights, tokens, image_path, save_pat
     # Color bars based on attention weight
     max_weight = max(attention_weights)
     for bar, weight in zip(bars, attention_weights):
-        bar.set_color(plt.cm.viridis(weight / max_weight))
+        bar.set_color(plt.cm.get_cmap("viridis")(weight / max_weight))
     
     plt.tight_layout()
     plt.savefig(save_path, bbox_inches='tight', dpi=300)

@@ -24,19 +24,6 @@ def main():
     
     # Create model
     model = PokemonSpriteGenerator(
-        vocab_size=30522,
-        embedding_dim=256,
-        num_heads=8,
-        num_layers=6,
-        hidden_dim=512,
-        max_seq_length=128,
-        latent_dim=256,
-        noise_dim=100,
-        image_size=215,
-        num_channels=3,
-        base_channels=64,
-        attention_dim=256,
-        dropout=0.1
     )
     
     model = model.to(device)
