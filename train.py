@@ -179,23 +179,26 @@ def main():
     
     # Create data loaders
     logger.log("Creating data loaders...")
-    train_loader, val_loader, test_loader = create_data_loaders(
-        data_dir=config['data']['data_dir'],
-        batch_size=config['training']['batch_size'],
-        train_split=config['data']['train_split'],
-        val_split=config['data']['val_split'],
-        test_split=config['data']['test_split']
-    )
+    try:
+        train_loader, val_loader, test_loader = create_data_loaders(
+            data_dir=config['data']['data_dir'],
+            batch_size=config['training']['batch_size'],
+            train_split=config['data']['train_split'],
+            val_split=config['data']['val_split'],
+            test_split=config['data']['test_split']
+        )
+    except:
+        pass
     
-    logger.log(f"Training samples: {len(train_loader.dataset)}")
-    logger.log(f"Validation samples: {len(val_loader.dataset)}")
-    logger.log(f"Test samples: {len(test_loader.dataset)}")
+    # logger.log(f"Training samples: {len(train_loader.dataset)}")
+    # logger.log(f"Validation samples: {len(val_loader.dataset)}")
+    # logger.log(f"Test samples: {len(test_loader.dataset)}")
     
     # Create model
     logger.log("Creating model...")
     model = PokemonSpriteGenerator(
         model_name=config['model']['text_encoder']['model_name'],
-        text_embedding_dim=config['model']['decoder']['embedding_dim'],
+        text_embedding_dim=config['model']['decoder']['text_embedding_dim'],
         noise_dim=config['model']['decoder']['noise_dim'],
         nhead=config['model']['text_encoder']['nhead'],
         num_encoder_layers=config['model']['text_encoder']['num_encoder_layers'],
