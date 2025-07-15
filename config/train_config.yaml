@@ -1,34 +1,38 @@
 # Configuration for training the Pokemon sprite generator
 
+# Experiment settings
+experiment_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments"
+
 # Model configuration
 model:
-  text_encoder:
-    model_name: "prajjwal1/bert-mini"
-    nhead: 4
-    num_encoder_layers: 2
-    hidden_dim: 256
-    dropout: 0.1
-  
-  decoder:
-    text_embedding_dim: 256
-    noise_dim: 100
-    final_image_channels: 3
-  attention:
-    encoder_dim: 256
-    decoder_dim: 256
+  bert_model: "prajjwal1/bert-mini"
+  text_embedding_dim: 256
+  noise_dim: 100
+  nhead: 4
+  num_encoder_layers: 2
+
+# Data configuration
+data:
+  csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/pokemon.csv"
+  image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
+  batch_size: 16
+  image_size: 215
+  num_workers: 4
+  pin_memory: true
+  train_split: 0.8
+  val_split: 0.15
+  test_split: 0.05
 
 # Training configuration
 training:
-  batch_size: 16
-  num_epochs: 5
-  learning_rate: 0.0002
-  beta1: 0.5
-  beta2: 0.999
-  weight_decay: 0.0001
+  max_epochs: 100
   
   # Loss weights
   reconstruction_weight: 1.0
   attention_weight: 0.1
+  
+  # Gradient clipping
+  grad_clip: 1.0
   
   # Checkpoints
   save_every: 10
@@ -37,14 +41,29 @@ training:
   # Logging
   log_every: 100
   log_dir: "logs"
+  
+  # Sampling
+  sample_every: 5
 
-# Data configuration
-data:
-  dataset_url: "https://github.com/cristobalmitchell/pokedex/"
-  data_dir: "data"
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
+# Optimization
+optimization:
+  optimizer: "adamw"
+  learning_rate: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  scheduler: "cosine"
+  max_epochs: 100
+  step_size: 30
+  gamma: 0.1
+  patience: 10
+
+# Logging and monitoring
+logging:
+  log_interval: 50
+  sample_interval: 5
+  checkpoint_interval: 10
   
 # Device
 device: "mps"  # or "cpu"

@@ -42,3 +42,10 @@ class PokemonSpriteGenerator(nn.Module):
         generated_image = self.decoder(noise, encoder_output)
         
         return generated_image
+    
+    def get_attention_weights(self):
+        """
+        Returns the attention weights from the last forward pass.
+        Useful for visualization and analysis.
+        """
+        return self.decoder.get_attention_weights()

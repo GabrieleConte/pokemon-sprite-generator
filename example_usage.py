@@ -1,69 +1,98 @@
 #!/usr/bin/env python3
 """
-Example usage of the Pokemon Sprite Generator.
+Example usage script for Pokemon Sprite Generator training.
 """
 
-import torch
 import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+from pathlib import Path
 
-from models import PokemonSpriteGenerator
-from utils import get_device, set_seed, tensor_to_image
+# Add src to path
+sys.path.append(str(Path(__file__).parent / "src"))
 
+from src.training.trainer import PokemonTrainer, load_config
+from src.data.dataset import get_dataset_statistics, create_data_loaders
 
 def main():
-    """Example of using the Pokemon Sprite Generator."""
+    # Example 1: Show dataset statistics
+    print("Example 1: Dataset Statistics")
+    print("-" * 50)
     
-    # Set random seed for reproducibility
-    set_seed(42)
+    config = load_config('config/train_config.yaml')
     
-    # Get device
-    device = get_device()
-    print(f"Using device: {device}")
-    
-    # Create model
-    model = PokemonSpriteGenerator(
-    )
-    
-    model = model.to(device)
-    print(f"Model created with {model.count_parameters():,} parameters")
-    
-    # Example text descriptions
-    descriptions = [
-        "A small yellow electric mouse Pokemon with red cheeks and a lightning bolt tail",
-        "A large orange dragon Pokemon with blue wings and a flaming tail",
-        "A blue turtle Pokemon with water cannons on its shell"
-    ]
-    
-    # Generate sprites
-    print("\nGenerating Pokemon sprites...")
-    with torch.no_grad():
-        # Generate single samples
-        generated_images = model.generate(descriptions, num_samples=1)
-        print(f"Generated {len(generated_images)} sprites with shape: {generated_images.shape}")
-        
-        # Generate multiple samples with different temperatures
-        for temperature in [0.5, 1.0, 1.5]:
-            print(f"\nGenerating with temperature {temperature}...")
-            generated_images = model.generate(descriptions[:1], num_samples=3, temperature=temperature)
-            print(f"Generated {len(generated_images)} sprites")
-    
-    # Example with attention visualization
-    print("\nGenerating with attention visualization...")
-    with torch.no_grad():
-        generated_images, attention_info = model.generate(
-            descriptions[:1], 
-            num_samples=1, 
-            return_attention=True
+    try:
+        stats = get_dataset_statistics(
+            config['data']['csv_path'],
+            config['data']['image_dir']
         )
         
-        attention_weights = attention_info['attention_weights']
-        print(f"Attention weights shape: {attention_weights.shape}")
-        print(f"Sample attention weights: {attention_weights[0][:10].tolist()}")
+        print(f"Total Pokemon: {stats['total_samples']}")
+        print(f"Average description length: {stats['avg_description_length']:.1f} words")
+        print(f"Description length std: {stats['description_length_std']:.1f}")
+        print(f"Top 5 Pokemon types: {list(stats['type_distribution'].items())[:5]}")
+        print(f"Missing images: {stats['missing_images']}")
+        print(f"Missing descriptions: {stats['missing_descriptions']}")
+    except Exception as e:
+        print(f"Error computing statistics: {e}")
     
-    print("\nExample completed successfully!")
+    print("\n" + "=" * 60 + "\n")
+    
+    # Example 2: Test data loaders
+    print("Example 2: Data Loaders Test")
+    print("-" * 50)
+    
+    try:
+        train_loader, val_loader = create_data_loaders(
+            csv_path=config['data']['csv_path'],
+            image_dir=config['data']['image_dir'],
+            batch_size=4,
+            image_size=config['data']['image_size']
+        )
+        
+        print(f"Training batches: {len(train_loader)}")
+        print(f"Validation batches: {len(val_loader)}")
+        print("Data loaders created successfully")
+        
+    except Exception as e:
+        print(f"Error creating data loaders: {e}")
+    
+    print("\n" + "=" * 60 + "\n")
+    
+    # Example 3: Initialize trainer (without training)
+    print("Example 3: Trainer Initialization")
+    print("-" * 50)
+    
+    try:
+        trainer = PokemonTrainer(
+            config=config,
+            use_wandb=False,
+            experiment_name='test_experiment'
+        )
+        
+        print(f"Trainer initialized successfully")
+        print(f"Model device: {trainer.device}")
+        print(f"Experiment name: test_experiment")
+        print(f"Using Weights & Biases: False")
+        
+    except Exception as e:
+        print(f"Error initializing trainer: {e}")
+    
+    print("\n" + "=" * 60 + "\n")
+    
+    # Example 4: Training commands
+    print("Example 4: Training Commands")
+    print("-" * 50)
+    
+    print("To start training:")
+    print("  python train.py --config config/train_config.yaml")
+    print("")
+    print("To resume training:")
+    print("  python train.py --resume checkpoints/checkpoint_epoch_10.pth")
+    print("")
+    print("To use Weights & Biases:")
+    print("  python train.py --use-wandb --experiment-name my_experiment")
+    print("")
+    print("To show dataset statistics:")
+    print("  python train.py --data-stats")
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
