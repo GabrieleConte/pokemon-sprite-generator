@@ -1,0 +1,19 @@
+name: pokemon-sprite-generator
+channels:
+  - pytorch-nightly
+  - conda-forge
+  - defaults
+dependencies:
+  - pytorch=2.7.1
+  - torchvision=0.22.0
+  - torchaudio=2.7.1
+  - transformers=4.53.2
+  - numpy=2.3.1
+  - pillow=11.3.0
+  - tqdm=4.67.1
+  - matplotlib=3.10.3
+  - requests=2.32.3
+  - pandas=2.3.1
+  - scikit-learn=1.7.0
+  - tensorboard=2.19.0
+  - wandb=0.21.0

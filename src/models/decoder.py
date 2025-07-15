@@ -81,52 +81,108 @@ class ImageDecoder(nn.Module):
         # Initial fully connected layer
         self.fc = nn.Linear(noise_dim, 512 * 3 * 3)
         
-        # CNN decoder layers with attention at multiple scales
+        # CNN decoder layers with attention at multiple scales (10 layers total)
         self.decoder_layers = nn.ModuleList([
-            # Layer 1: 512 -> 256 channels, 3x3 -> 6x6
+            # Layer 1: 512 -> 512 channels, 3x3 -> 4x4
             nn.Sequential(
-                nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(512, 512, kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm2d(512),
+                nn.ReLU()
+            ),
+            # Layer 2: 512 -> 256 channels, 4x4 -> 6x6
+            nn.Sequential(
+                nn.ConvTranspose2d(512, 256, kernel_size=3, stride=1, padding=0),
                 nn.BatchNorm2d(256),
                 nn.ReLU()
             ),
-            # Layer 2: 256 -> 128 channels, 6x6 -> 12x12  
+            # Layer 3: 256 -> 256 channels, 6x6 -> 8x8
             nn.Sequential(
-                nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(256, 256, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(256),
+                nn.ReLU()
+            ),
+            # Layer 4: 256 -> 128 channels, 8x8 -> 12x12
+            nn.Sequential(
+                nn.ConvTranspose2d(256, 128, kernel_size=3, stride=1, padding=0),
                 nn.BatchNorm2d(128),
                 nn.ReLU()
             ),
-            # Layer 3: 128 -> 64 channels, 12x12 -> 24x24
+            # Layer 5: 128 -> 128 channels, 12x12 -> 16x16
             nn.Sequential(
-                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(128, 128, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(128),
+                nn.ReLU()
+            ),
+            # Layer 6: 128 -> 64 channels, 16x16 -> 24x24
+            nn.Sequential(
+                nn.ConvTranspose2d(128, 64, kernel_size=3, stride=1, padding=0),
                 nn.BatchNorm2d(64),
                 nn.ReLU()
             ),
-            # Layer 4: 64 -> 32 channels, 24x24 -> 48x48
+            # Layer 7: 64 -> 64 channels, 24x24 -> 32x32
             nn.Sequential(
-                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(64, 64, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(64),
+                nn.ReLU()
+            ),
+            # Layer 8: 64 -> 32 channels, 32x32 -> 48x48
+            nn.Sequential(
+                nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1, padding=0),
                 nn.BatchNorm2d(32),
                 nn.ReLU()
             ),
-            # Layer 5: 32 -> 16 channels, 48x48 -> 96x96
+            # Layer 9: 32 -> 32 channels, 48x48 -> 64x64
             nn.Sequential(
-                nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+                nn.ConvTranspose2d(32, 32, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(32),
+                nn.ReLU()
+            ),
+            # Layer 10: 32 -> 16 channels, 64x64 -> 96x96
+            nn.Sequential(
+                nn.ConvTranspose2d(32, 16, kernel_size=3, stride=1, padding=0),
                 nn.BatchNorm2d(16),
+                nn.ReLU()
+            ),
+            # Layer 11: 16 -> 16 channels, 96x96 -> 128x128
+            nn.Sequential(
+                nn.ConvTranspose2d(16, 16, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(16),
+                nn.ReLU()
+            ),
+            # Layer 12: 16 -> 8 channels, 128x128 -> 160x160
+            nn.Sequential(
+                nn.ConvTranspose2d(16, 8, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(8),
+                nn.ReLU()
+            ),
+            # Layer 13: 8 -> 8 channels, 160x160 -> 192x192
+            nn.Sequential(
+                nn.ConvTranspose2d(8, 8, kernel_size=3, stride=1, padding=0),
+                nn.BatchNorm2d(8),
                 nn.ReLU()
             )
         ])
         
-        # Cross-attention layers for different CNN scales
+        # Cross-attention layers for different CNN scales (13 layers total)
         self.attention_layers = nn.ModuleList([
+            CrossAttentionLayer(512, text_embedding_dim, num_heads=8),
+            CrossAttentionLayer(256, text_embedding_dim, num_heads=8),
             CrossAttentionLayer(256, text_embedding_dim, num_heads=8),
             CrossAttentionLayer(128, text_embedding_dim, num_heads=8),
+            CrossAttentionLayer(128, text_embedding_dim, num_heads=8),
+            CrossAttentionLayer(64, text_embedding_dim, num_heads=4),
             CrossAttentionLayer(64, text_embedding_dim, num_heads=4),
             CrossAttentionLayer(32, text_embedding_dim, num_heads=4),
-            CrossAttentionLayer(16, text_embedding_dim, num_heads=2)
+            CrossAttentionLayer(32, text_embedding_dim, num_heads=4),
+            CrossAttentionLayer(16, text_embedding_dim, num_heads=2),
+            CrossAttentionLayer(16, text_embedding_dim, num_heads=2),
+            CrossAttentionLayer(8, text_embedding_dim, num_heads=2),
+            CrossAttentionLayer(8, text_embedding_dim, num_heads=2)
         ])
         
-        # Final output layer
+        # Final output layer with gradual upsampling
         self.final_layer = nn.Sequential(
-            nn.ConvTranspose2d(16, final_image_channels, kernel_size=7, stride=2, padding=2),
+            nn.ConvTranspose2d(8, final_image_channels, kernel_size=3, stride=1, padding=1),
             nn.Upsample(size=(215, 215), mode='bilinear', align_corners=False),
             nn.Tanh()
         )

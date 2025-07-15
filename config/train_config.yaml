@@ -17,7 +17,7 @@ data:
   image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
   batch_size: 16
   image_size: 215
-  num_workers: 4
+  num_workers: 8
   pin_memory: true
   train_split: 0.8
   val_split: 0.15

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent / "src"))
 
 from src.training.trainer import PokemonTrainer, load_config
-from src.data.dataset import get_dataset_statistics, create_data_loaders
+from src.data import get_dataset_statistics, create_data_loaders
 
 def main():
     # Example 1: Show dataset statistics

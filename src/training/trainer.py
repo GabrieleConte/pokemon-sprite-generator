@@ -22,7 +22,7 @@ except ImportError:
     WANDB_AVAILABLE = False
 
 from src.models.pokemon_generator import PokemonSpriteGenerator
-from src.data.dataset import create_data_loaders
+from src.data import create_data_loaders
 from src.utils.tokenization_utils import get_attention_tokens_mapping
 from src.utils import get_device
 
@@ -211,7 +211,7 @@ class PokemonTrainer:
         mse_loss = self.mse_loss(generated_images, target_images)
         
         # Perceptual loss weight
-        perceptual_weight = self.config['optimization'].get('perceptual_weight', 0)
+        perceptual_weight = self.config['optimization'].get('perceptual_weight', 0.05)
         
         # Combined loss
         total_loss = l1_loss + perceptual_weight * mse_loss

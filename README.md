@@ -220,7 +220,7 @@ The model uses cross-attention between text and image features:
 
 ```bash
 # Test dataset loading
-python -c "from src.data.dataset import get_dataset_statistics; print(get_dataset_statistics('data/pokemon.csv', 'data/small_images'))"
+python -c "from src.data import get_dataset_statistics; print(get_dataset_statistics('data/pokemon.csv', 'data/small_images'))"
 
 # Test model creation
 python -c "from src.training.trainer import PokemonTrainer, load_config; trainer = PokemonTrainer(load_config('config/train_config.yaml'))"
