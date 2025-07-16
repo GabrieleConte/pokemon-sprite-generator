@@ -45,9 +45,12 @@ class PokemonDataset(Dataset):
         
         # Load CSV data
         try:
-            self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-8')
+            self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
         except UnicodeDecodeError:
             try:
+                self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-8')
+            except UnicodeDecodeError:
+                self.data = pd.read_csv(csv_path, sep='\t', encoding='latin-1')
                 # Try with UTF-16 encoding (common for Windows files)
                 self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
             except:
