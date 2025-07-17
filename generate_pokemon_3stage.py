@@ -94,11 +94,25 @@ class PokemonGenerator:
         print(f"Loading VAE checkpoint from {vae_checkpoint_path}")
         vae_checkpoint = torch.load(vae_checkpoint_path, map_location=self.device)
         
-        self.vae_encoder.load_state_dict(vae_checkpoint['vae_encoder_state_dict'])
-        self.vae_decoder.load_state_dict(vae_checkpoint['vae_decoder_state_dict'])
+        # Load VAE weights from the complete VAE model
+        vae_state_dict = vae_checkpoint['vae_state_dict']
+        
+        # Extract encoder and decoder state dicts from the complete VAE
+        encoder_state_dict = {}
+        decoder_state_dict = {}
+        
+        for key, value in vae_state_dict.items():
+            if key.startswith('encoder.'):
+                encoder_state_dict[key[8:]] = value  # Remove 'encoder.' prefix
+            elif key.startswith('decoder.'):
+                decoder_state_dict[key[8:]] = value  # Remove 'decoder.' prefix
+        
+        self.vae_encoder.load_state_dict(encoder_state_dict)
+        self.vae_decoder.load_state_dict(decoder_state_dict)
         
         # Load text encoder if available
         if 'text_encoder_state_dict' in vae_checkpoint:
+            print("Loading text encoder state from VAE checkpoint")
             self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
         
         # Load diffusion checkpoint
