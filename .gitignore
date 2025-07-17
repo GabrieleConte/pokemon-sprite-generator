@@ -49,7 +49,7 @@ ehthumbs.db
 Thumbs.db
 
 # Data and model files
-/data/
+# /data/
 !/src/data/
 checkpoints/
 logs/
