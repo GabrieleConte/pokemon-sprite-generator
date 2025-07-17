@@ -1,18 +1,13 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Tuple, Any
 import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image
 import yaml
 
-from src.models.vae_decoder import PokemonVAE, NoiseScheduler
+from src.models.vae_decoder import PokemonVAE
 from src.models.text_encoder import TextEncoder
 from src.models.losses import CombinedLoss
 from src.data import create_data_loaders

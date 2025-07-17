@@ -30,38 +30,6 @@ class ResNetBlock(nn.Module):
         x = self.conv2(x)
         return x + self.shortcut(residual)
 
-
-class AttentionBlock(nn.Module):
-    """Multi-head self-attention block for spatial features."""
-    
-    def __init__(self, channels: int, num_heads: int = 8):
-        super().__init__()
-        self.channels = channels
-        self.num_heads = num_heads
-        self.head_dim = channels // num_heads
-        
-        self.norm = nn.GroupNorm(32, channels)
-        self.qkv = nn.Conv2d(channels, channels * 3, kernel_size=1)
-        self.proj = nn.Conv2d(channels, channels, kernel_size=1)
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.shape
-        residual = x
-        
-        x = self.norm(x)
-        qkv = self.qkv(x).reshape(b, 3, self.num_heads, self.head_dim, h * w)
-        q, k, v = qkv.unbind(1)
-        
-        # Compute attention
-        attn = torch.softmax(q.transpose(-2, -1) @ k / math.sqrt(self.head_dim), dim=-1)
-        x = (attn @ v.transpose(-2, -1)).transpose(-2, -1)
-        
-        x = x.reshape(b, c, h, w)
-        x = self.proj(x)
-        
-        return x + residual
-
-
 class CrossAttentionBlock(nn.Module):
     """Cross-attention block for text conditioning."""
     
@@ -379,53 +347,3 @@ class PokemonVAE(nn.Module):
         super().to(device)
         self.noise_scheduler.to(device)
         return self
-
-
-class DiffusionVAEDecoder(nn.Module):
-    """Diffusion-style VAE decoder that learns to denoise latent representations."""
-    
-    def __init__(self, latent_dim: int = 512, text_dim: int = 256, output_channels: int = 3):
-        super().__init__()
-        self.latent_dim = latent_dim
-        self.text_dim = text_dim
-        
-        # Time embedding for diffusion steps
-        self.time_embed = nn.Sequential(
-            nn.Linear(128, 512),
-            nn.SiLU(),
-            nn.Linear(512, 512)
-        )
-        
-        # Main decoder with time and text conditioning
-        self.decoder = VAEDecoder(latent_dim, text_dim, output_channels)
-        
-    def get_timestep_embedding(self, timesteps: torch.Tensor, embedding_dim: int = 128) -> torch.Tensor:
-        """Create sinusoidal timestep embeddings."""
-        half_dim = embedding_dim // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=timesteps.device) * -emb)
-        emb = timesteps[:, None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-        return emb
-        
-    def forward(self, noisy_latent: torch.Tensor, text_emb: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
-        """
-        Denoise latent vector with text conditioning.
-        
-        Args:
-            noisy_latent: Noisy latent vector [batch_size, latent_dim, 3, 3]
-            text_emb: Text embeddings [batch_size, seq_len, text_dim]
-            timesteps: Timestep indices [batch_size]
-            
-        Returns:
-            Denoised image [batch_size, 3, 215, 215]
-        """
-        # Get time embeddings
-        time_emb = self.time_embed(self.get_timestep_embedding(timesteps))
-        
-        # Add time information to text embeddings
-        time_emb = time_emb.unsqueeze(1).expand(-1, text_emb.size(1), -1)
-        conditioned_text = text_emb + time_emb
-        
-        # Decode with conditioning
-        return self.decoder(noisy_latent, conditioned_text)

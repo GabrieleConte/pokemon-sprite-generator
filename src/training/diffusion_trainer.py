@@ -4,15 +4,10 @@ Trainer for diffusion-based U-Net denoising in Pokemon sprite generation.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
-from PIL import Image
+from typing import Dict, Any
 import logging
-import os
-import numpy as np
 import yaml
 from tqdm import tqdm
 from torchvision import transforms
@@ -20,7 +15,6 @@ from torchvision import transforms
 from src.models.vae_decoder import VAEEncoder, VAEDecoder
 from src.models.text_encoder import TextEncoder
 from src.models.unet import UNet
-from src.models.losses import CombinedLoss
 from src.data import create_data_loaders
 from src.utils import get_device
 

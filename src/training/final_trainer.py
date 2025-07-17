@@ -1,23 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Any
 import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image
 import yaml
 
-try:
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-
-from src.models.vae_decoder import PokemonVAE, VAEEncoder, VAEDecoder
+from src.models.vae_decoder import VAEEncoder, VAEDecoder
 from src.models.text_encoder import TextEncoder
 from src.models.unet import UNet
 from src.data import create_data_loaders
