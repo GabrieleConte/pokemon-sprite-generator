@@ -11,6 +11,15 @@ model:
   latent_dim: 512
   nhead: 4
   num_encoder_layers: 2
+  
+  # U-Net parameters
+  time_emb_dim: 128
+  num_heads: 8
+  
+  # Diffusion parameters
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
 
 # Data configuration
 data:
@@ -28,12 +37,19 @@ data:
 training:
   max_epochs: 100
   
-  # Two-stage training
-  phase1_epochs: 50  # Train only text encoder for first 50 epochs
+  # VAE training (Stage 1)
+  vae_epochs: 1
+  
+  # Diffusion training (Stage 2)  
+  diffusion_epochs: 1
+  
+  # Final training (Stage 3)
+  final_epochs: 1
   
   # Loss weights
   reconstruction_weight: 1.0
-  attention_weight: 0.1
+  perceptual_weight: 0.1
+  kl_weight: 0.01
   
   # KL annealing to prevent posterior collapse
   kl_anneal_start: 0      # Start KL annealing from epoch 0
@@ -41,6 +57,11 @@ training:
   kl_weight_start: 0.0    # Start with no KL weight
   kl_weight_end: 0.5      # End with moderate KL weight
   free_bits: 0.5          # Minimum KL bits per dimension
+  
+  # Diffusion parameters
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
   
   # Gradient clipping
   grad_clip: 1.0

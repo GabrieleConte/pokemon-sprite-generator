@@ -2,9 +2,12 @@
 Training utilities for Pokemon Sprite Generator.
 """
 
-from .trainer import PokemonTrainer, load_config
+from .vae_trainer import VAETrainer
+from .diffusion_trainer import DiffusionTrainer
+from .final_trainer import FinalTrainer
 
 __all__ = [
-    'PokemonTrainer',
-    'load_config'
+    'VAETrainer',
+    'DiffusionTrainer',
+    'FinalTrainer'
 ]

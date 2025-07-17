@@ -12,43 +12,142 @@ import numpy as np
 from PIL import Image
 import yaml
 
-# Optional wandb import
 try:
-    import wandb
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
 
-from src.models.vae_decoder import PokemonVAE
+from src.models.vae_decoder import PokemonVAE, VAEEncoder, VAEDecoder
 from src.models.text_encoder import TextEncoder
+from src.models.unet import UNet
 from src.data import create_data_loaders
 from src.utils import get_device
 
 
+class NoiseScheduler:
+    """Noise scheduler for diffusion sampling."""
+    
+    def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
+        self.num_timesteps = num_timesteps
+        
+        # Linear schedule for betas
+        self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
+        self.alphas = 1.0 - self.betas
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+        
+        # Precompute values for sampling
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        
+        # Coefficients for reverse process
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
+        
+        # Posterior variance calculation
+        posterior_variance = self.betas * (1.0 - torch.cat([torch.tensor([1.0]), self.alphas_cumprod[:-1]])) / (1.0 - self.alphas_cumprod)
+        # Clamp to avoid 0 variance
+        self.posterior_variance = torch.clamp(posterior_variance, min=1e-20)
+        
+    def add_noise(self, x_0: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
+        """Add noise to clean latents according to diffusion schedule."""
+        device = x_0.device
+        self.to(device)
+        
+        sqrt_alpha_cumprod = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha_cumprod = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        
+        return sqrt_alpha_cumprod * x_0 + sqrt_one_minus_alpha_cumprod * noise
+    
+    def sample_previous_timestep(self, x_t: torch.Tensor, predicted_noise: torch.Tensor, timestep: int) -> torch.Tensor:
+        """Sample from p(x_{t-1} | x_t) using predicted noise."""
+        device = x_t.device
+        self.to(device)
+        
+        # Coefficients for mean
+        sqrt_recip_alpha = self.sqrt_recip_alphas[timestep]
+        beta = self.betas[timestep]
+        sqrt_one_minus_alpha_cumprod = self.sqrt_one_minus_alphas_cumprod[timestep]
+        
+        # Compute mean
+        mean = sqrt_recip_alpha * (x_t - beta * predicted_noise / sqrt_one_minus_alpha_cumprod)
+        
+        # Add noise if not final step
+        if timestep > 0:
+            variance = self.posterior_variance[timestep]
+            noise = torch.randn_like(x_t)
+            return mean + torch.sqrt(variance) * noise
+        else:
+            return mean
+    
+    def to(self, device):
+        """Move scheduler to device."""
+        self.betas = self.betas.to(device)
+        self.alphas = self.alphas.to(device)
+        self.alphas_cumprod = self.alphas_cumprod.to(device)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device)
+        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
+        self.sqrt_recip_alphas = self.sqrt_recip_alphas.to(device)
+        self.posterior_variance = self.posterior_variance.to(device)
+        return self
+
+
 class FinalPokemonGenerator(nn.Module):
     """
-    Final Pokemon generator that combines fine-tuned BERT with pre-trained VAE decoder.
+    Final Pokemon generator that combines fine-tuned BERT with pre-trained VAE and U-Net diffusion.
     """
     
-    def __init__(self, vae_path: str, text_encoder_config: Dict[str, Any]):
+    def __init__(self, vae_path: str, diffusion_path: str, text_encoder_config: Dict[str, Any]):
         super().__init__()
         
-        # Load pre-trained VAE
-        self.vae = PokemonVAE(
+        # Load pre-trained VAE components
+        vae_checkpoint = torch.load(vae_path, map_location='cpu')
+        
+        # VAE Encoder (frozen)
+        self.vae_encoder = VAEEncoder(
+            input_channels=3,
+            latent_dim=text_encoder_config.get('latent_dim', 512)
+        )
+        
+        # VAE Decoder (frozen initially, will be unfrozen for fine-tuning)
+        self.vae_decoder = VAEDecoder(
             latent_dim=text_encoder_config.get('latent_dim', 512),
-            text_dim=text_encoder_config['text_embedding_dim']
+            text_dim=text_encoder_config['text_embedding_dim'],
+            output_channels=3
         )
         
         # Load VAE weights
-        checkpoint = torch.load(vae_path, map_location='cpu')
-        self.vae.load_state_dict(checkpoint['vae_state_dict'])
+        vae_state_dict = vae_checkpoint['vae_state_dict']
+        encoder_state_dict = {}
+        decoder_state_dict = {}
         
-        # Freeze VAE encoder (we only need decoder)
-        for param in self.vae.encoder.parameters():
+        for key, value in vae_state_dict.items():
+            if key.startswith('encoder.'):
+                encoder_state_dict[key[8:]] = value
+            elif key.startswith('decoder.'):
+                decoder_state_dict[key[8:]] = value
+        
+        self.vae_encoder.load_state_dict(encoder_state_dict)
+        self.vae_decoder.load_state_dict(decoder_state_dict)
+        
+        # Freeze VAE components initially
+        for param in self.vae_encoder.parameters():
+            param.requires_grad = False
+        for param in self.vae_decoder.parameters():
             param.requires_grad = False
         
-        # Keep VAE decoder frozen initially, will be unfrozen for fine-tuning
-        for param in self.vae.decoder.parameters():
+        # Load pre-trained U-Net
+        diffusion_checkpoint = torch.load(diffusion_path, map_location='cpu')
+        
+        self.unet = UNet(
+            latent_dim=text_encoder_config.get('latent_dim', 512),
+            text_dim=text_encoder_config['text_embedding_dim'],
+            time_emb_dim=text_encoder_config.get('time_emb_dim', 128),
+            num_heads=text_encoder_config.get('num_heads', 8)
+        )
+        
+        self.unet.load_state_dict(diffusion_checkpoint['unet_state_dict'])
+        
+        # Freeze U-Net initially
+        for param in self.unet.parameters():
             param.requires_grad = False
         
         # Text encoder (will be fine-tuned)
@@ -59,15 +158,27 @@ class FinalPokemonGenerator(nn.Module):
             num_encoder_layers=text_encoder_config['num_encoder_layers']
         )
         
+        # Load text encoder weights if available
+        if 'text_encoder_state_dict' in vae_checkpoint:
+            self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
+        
+        # Diffusion components
+        self.noise_scheduler = NoiseScheduler(
+            num_timesteps=text_encoder_config.get('num_timesteps', 1000),
+            beta_start=text_encoder_config.get('beta_start', 0.0001),
+            beta_end=text_encoder_config.get('beta_end', 0.02)
+        )
+        
         # Latent dimension
         self.latent_dim = text_encoder_config.get('latent_dim', 512)
         
-    def forward(self, text_list: List[str]) -> torch.Tensor:
+    def forward(self, text_list: List[str], num_inference_steps: int = 50) -> torch.Tensor:
         """
-        Generate Pokemon images from text descriptions.
+        Generate Pokemon images from text descriptions using diffusion.
         
         Args:
             text_list: List of text descriptions
+            num_inference_steps: Number of diffusion steps for sampling
             
         Returns:
             Generated images [batch_size, 3, 215, 215]
@@ -75,23 +186,54 @@ class FinalPokemonGenerator(nn.Module):
         # Encode text
         text_emb = self.text_encoder(text_list)
         
-        # Sample from latent space
+        # Start from pure noise in latent space
         batch_size = text_emb.size(0)
         latent = torch.randn(batch_size, self.latent_dim, 3, 3, device=text_emb.device)
         
-        # Generate image using VAE decoder
-        generated = self.vae.decoder(latent, text_emb)
+        # Diffusion sampling
+        step_size = self.noise_scheduler.num_timesteps // num_inference_steps
+        
+        for i in range(num_inference_steps):
+            timestep = self.noise_scheduler.num_timesteps - 1 - i * step_size
+            timestep = max(0, timestep)
+            
+            # Create timestep tensor
+            timesteps = torch.full((batch_size,), timestep, device=text_emb.device, dtype=torch.long)
+            
+            # Predict noise with U-Net
+            with torch.no_grad():
+                predicted_noise = self.unet(latent, timesteps, text_emb)
+            
+            # Sample previous timestep
+            if timestep > 0:
+                latent = self.noise_scheduler.sample_previous_timestep(latent, predicted_noise, timestep)
+            else:
+                # Final step - just remove predicted noise
+                latent = latent - predicted_noise
+        
+        # Decode latent to image using VAE decoder
+        generated = self.vae_decoder(latent, text_emb)
         
         return generated
     
     def unfreeze_vae_decoder(self):
         """Unfreeze VAE decoder for fine-tuning."""
-        for param in self.vae.decoder.parameters():
+        for param in self.vae_decoder.parameters():
             param.requires_grad = True
     
     def freeze_vae_decoder(self):
         """Freeze VAE decoder."""
-        for param in self.vae.decoder.parameters():
+        for param in self.vae_decoder.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_unet(self):
+        """Unfreeze U-Net for fine-tuning."""
+        for param in self.unet.parameters():
+            param.requires_grad = True
+    
+    def freeze_unet(self):
+        """Freeze U-Net."""
+        for param in self.unet.parameters():
             param.requires_grad = False
 
 
@@ -103,7 +245,7 @@ class FinalTrainer:
     def __init__(self, 
                  config: Dict[str, Any],
                  vae_checkpoint_path: str,
-                 use_wandb: bool = False,
+                 diffusion_checkpoint_path: str,
                  experiment_name: str = "pokemon_final"):
         """
         Initialize the final trainer.
@@ -111,12 +253,12 @@ class FinalTrainer:
         Args:
             config: Training configuration dictionary
             vae_checkpoint_path: Path to pre-trained VAE checkpoint
-            use_wandb: Whether to use Weights & Biases for logging
+            diffusion_checkpoint_path: Path to pre-trained diffusion checkpoint
             experiment_name: Name for the experiment
         """
         self.config = config
         self.vae_checkpoint_path = vae_checkpoint_path
-        self.use_wandb = use_wandb and WANDB_AVAILABLE
+        self.diffusion_checkpoint_path = diffusion_checkpoint_path
         self.experiment_name = experiment_name
         
         # Setup device
@@ -176,6 +318,7 @@ class FinalTrainer:
         # Create final generator
         self.generator = FinalPokemonGenerator(
             vae_path=self.vae_checkpoint_path,
+            diffusion_path=self.diffusion_checkpoint_path,
             text_encoder_config=model_config
         ).to(self.device)
         
@@ -236,7 +379,7 @@ class FinalTrainer:
         if opt_config['scheduler'] == 'cosine':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
-                T_max=opt_config['max_epochs']
+                T_max=self.config['training']['final_epochs']
             )
         elif opt_config['scheduler'] == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(
@@ -253,15 +396,6 @@ class FinalTrainer:
         """Setup monitoring and logging tools."""
         # TensorBoard writer
         self.tb_writer = SummaryWriter(log_dir=self.log_dir / 'tensorboard')
-        
-        # Weights & Biases
-        if self.use_wandb:
-            import wandb
-            wandb.init(
-                project="pokemon-final",
-                name=self.experiment_name,
-                config=self.config
-            )
     
     def compute_generation_loss(self, generated_images: torch.Tensor, target_images: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute generation loss."""
@@ -411,14 +545,6 @@ class FinalTrainer:
         # Log to tensorboard
         self.tb_writer.add_images('Real_Images', real_images, epoch)
         self.tb_writer.add_images('Generated_Images', generated_images, epoch)
-        
-        if self.use_wandb:
-            import wandb
-            wandb.log({
-                'Real_Images': [wandb.Image(img.permute(1, 2, 0).cpu().numpy()) for img in real_images],
-                'Generated_Images': [wandb.Image(img.permute(1, 2, 0).cpu().numpy()) for img in generated_images],
-                'epoch': epoch
-            })
     
     def switch_to_joint_training(self):
         """Switch to joint training mode (fine-tune both text encoder and VAE decoder)."""
@@ -428,7 +554,7 @@ class FinalTrainer:
         
         # Add VAE decoder parameters to optimizer
         vae_params = {
-            'params': self.generator.vae.decoder.parameters(),
+            'params': self.generator.vae_decoder.parameters(),
             'lr': self.config['optimization']['vae_decoder_lr'],
             'name': 'vae_decoder'
         }
@@ -481,13 +607,13 @@ class FinalTrainer:
     
     def train(self):
         """Main training loop."""
-        self.logger.info(f'Starting final training for {self.config["training"]["max_epochs"]} epochs')
+        self.logger.info(f'Starting final training for {self.config["training"]["final_epochs"]} epochs')
         
         # Phase 1: Train only text encoder
-        phase1_epochs = self.config['training'].get('phase1_epochs', self.config['training']['max_epochs'] // 2)
+        phase1_epochs = self.config['training'].get('phase1_epochs', self.config['training']['final_epochs'] // 2)
         
-        for epoch in range(self.current_epoch, self.config['training']['max_epochs']):
-            self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["max_epochs"]}')
+        for epoch in range(self.current_epoch, self.config['training']['final_epochs']):
+            self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["final_epochs"]}')
             
             # Switch to joint training at specified epoch
             if epoch == phase1_epochs and self.training_phase == 'text_encoder':
@@ -519,21 +645,6 @@ class FinalTrainer:
             self.tb_writer.add_scalar('Val/L1_Loss', val_metrics['l1_loss'], epoch)
             self.tb_writer.add_scalar('Val/MSE_Loss', val_metrics['mse_loss'], epoch)
             
-            # WandB logging
-            if self.use_wandb:
-                import wandb
-                wandb.log({
-                    'train/loss': train_metrics['loss'],
-                    'train/l1_loss': train_metrics['l1_loss'],
-                    'train/mse_loss': train_metrics['mse_loss'],
-                    'val/loss': val_metrics['loss'],
-                    'val/l1_loss': val_metrics['l1_loss'],
-                    'val/mse_loss': val_metrics['mse_loss'],
-                    'epoch': epoch,
-                    'training_phase': self.training_phase,
-                    'lr': self.scheduler.get_last_lr()[0]
-                })
-            
             # Generate samples
             if epoch % self.config['training']['sample_every'] == 0:
                 self.generate_samples(epoch)
@@ -551,9 +662,6 @@ class FinalTrainer:
         self.logger.info('Final training completed!')
         self.tb_writer.close()
         
-        if self.use_wandb:
-            import wandb
-            wandb.finish()
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -571,12 +679,15 @@ if __name__ == "__main__":
     # Path to pre-trained VAE model
     vae_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments/pokemon_vae_stage1/checkpoints/vae_best_model.pth"
     
+    # Path to pre-trained diffusion model
+    diffusion_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments/pokemon_diffusion_stage2/checkpoints/diffusion_best_model.pth"
+    
     # Create final trainer
     trainer = FinalTrainer(
         config=config,
         vae_checkpoint_path=vae_checkpoint_path,
-        use_wandb=False,
-        experiment_name="pokemon_final_stage2"
+        diffusion_checkpoint_path=diffusion_checkpoint_path,
+        experiment_name="pokemon_final_stage3"
     )
     
     # Start training

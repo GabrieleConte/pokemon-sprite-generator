@@ -12,15 +12,9 @@ import numpy as np
 from PIL import Image
 import yaml
 
-# Optional wandb import
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-
 from src.models.vae_decoder import PokemonVAE, NoiseScheduler
 from src.models.text_encoder import TextEncoder
+from src.models.losses import CombinedLoss
 from src.data import create_data_loaders
 from src.utils import get_device
 
@@ -32,18 +26,15 @@ class VAETrainer:
     
     def __init__(self, 
                  config: Dict[str, Any],
-                 use_wandb: bool = False,
                  experiment_name: str = "pokemon_vae"):
         """
         Initialize the VAE trainer.
         
         Args:
             config: Training configuration dictionary
-            use_wandb: Whether to use Weights & Biases for logging
             experiment_name: Name for the experiment
         """
         self.config = config
-        self.use_wandb = use_wandb and WANDB_AVAILABLE
         self.experiment_name = experiment_name
         
         # Setup device
@@ -55,6 +46,7 @@ class VAETrainer:
         self.kl_weight_start = config['training'].get('kl_weight_start', 0.0)
         self.kl_weight_end = config['training'].get('kl_weight_end', 1.0)
         self.free_bits = config['training'].get('free_bits', 0.5)  # Minimum KL per dimension
+        self.kl_annealing = config['training'].get('kl_annealing', True)  # Enable KL annealing by default
         
         # Current training state
         self.current_epoch = 0
@@ -176,7 +168,7 @@ class VAETrainer:
         if opt_config['scheduler'] == 'cosine':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
-                T_max=opt_config['max_epochs']
+                T_max=self.config['training']['vae_epochs']
             )
         elif opt_config['scheduler'] == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(
@@ -185,19 +177,17 @@ class VAETrainer:
                 gamma=opt_config['gamma']
             )
         
+        # Loss function with perceptual loss
+        self.criterion = CombinedLoss(
+            reconstruction_weight=self.config['training'].get('reconstruction_weight', 1.0),
+            perceptual_weight=self.config['training'].get('perceptual_weight', 0.1),
+            kl_weight=self.config['training'].get('kl_weight', 0.01)
+        ).to(self.device)
+        
     def setup_monitoring(self):
         """Setup monitoring and logging tools."""
         # TensorBoard writer
         self.tb_writer = SummaryWriter(log_dir=self.log_dir / 'tensorboard')
-        
-        # Weights & Biases
-        if self.use_wandb:
-            import wandb
-            wandb.init(
-                project="pokemon-vae",
-                name=self.experiment_name,
-                config=self.config
-            )
     
     def get_kl_weight(self, epoch: int) -> float:
         """Get current KL weight with annealing."""
@@ -223,29 +213,42 @@ class VAETrainer:
         
         return kl_loss
     
-    def compute_vae_loss(self, outputs: Dict[str, torch.Tensor], epoch: int) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """Compute VAE loss with KL annealing and free bits."""
-        recon_loss = outputs['recon_loss']
-        
-        # Get KL components
+    def compute_vae_loss(self, outputs: Dict[str, torch.Tensor], target_images: torch.Tensor, epoch: int) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """Compute VAE loss with perceptual loss, KL annealing and free bits."""
+        reconstructed = outputs['reconstructed']
         mu = outputs['mu']
         logvar = outputs['logvar']
         
-        # Compute KL loss with free bits
-        kl_loss = self.compute_free_bits_kl(mu, logvar)
+        # Use combined loss (perceptual + KL)
+        total_loss, loss_dict = self.criterion(reconstructed, target_images, mu, logvar)
         
-        # Get current KL weight
+        # Apply KL annealing
         kl_weight = self.get_kl_weight(epoch)
         
-        # Total loss
-        total_loss = recon_loss + kl_weight * kl_loss
-        
-        loss_dict = {
-            'total_loss': total_loss.item(),
-            'recon_loss': recon_loss.item(),
-            'kl_loss': kl_loss.item(),
-            'kl_weight': kl_weight
-        }
+        # Recompute total loss with annealed KL weight by recalculating from tensors
+        if self.kl_annealing:
+            # Get the individual loss components as tensors
+            recon_loss = self.criterion.l1_loss(reconstructed, target_images)
+            perceptual_loss = self.criterion.perceptual_loss(
+                (reconstructed + 1.0) / 2.0, (target_images + 1.0) / 2.0
+            )
+            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / mu.numel()
+            
+            # Recompute total loss with annealed KL weight
+            total_loss = (self.criterion.reconstruction_weight * recon_loss + 
+                         self.criterion.perceptual_weight * perceptual_loss + 
+                         kl_weight * kl_loss)
+            
+            # Update loss dict with annealed values
+            loss_dict = {
+                'total_loss': total_loss.item(),
+                'reconstruction_loss': recon_loss.item(),
+                'perceptual_loss': perceptual_loss.item(),
+                'kl_loss': kl_loss.item(),
+                'kl_weight': kl_weight
+            }
+        else:
+            loss_dict['kl_weight'] = kl_weight
         
         return total_loss, loss_dict
     
@@ -276,7 +279,7 @@ class VAETrainer:
             outputs = self.vae(images, text_emb, mode='train')
             
             # Compute loss
-            loss, loss_dict = self.compute_vae_loss(outputs, epoch)
+            loss, loss_dict = self.compute_vae_loss(outputs, images, epoch)
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -289,14 +292,14 @@ class VAETrainer:
             
             # Update metrics
             total_loss += loss_dict['total_loss']
-            total_recon_loss += loss_dict['recon_loss']
+            total_recon_loss += loss_dict['reconstruction_loss']
             total_kl_loss += loss_dict['kl_loss']
             
             # Log progress
             if batch_idx % self.config['training']['log_every'] == 0:
                 self.logger.info(f'Epoch {epoch}, Batch {batch_idx}/{num_batches}, '
                                f'Loss: {loss_dict["total_loss"]:.4f}, '
-                               f'Recon: {loss_dict["recon_loss"]:.4f}, '
+                               f'Recon: {loss_dict["reconstruction_loss"]:.4f}, '
                                f'KL: {loss_dict["kl_loss"]:.4f}, '
                                f'KL Weight: {loss_dict["kl_weight"]:.4f}')
             
@@ -335,11 +338,11 @@ class VAETrainer:
                 outputs = self.vae(images, text_emb, mode='train')
                 
                 # Compute loss
-                loss, loss_dict = self.compute_vae_loss(outputs, epoch)
+                loss, loss_dict = self.compute_vae_loss(outputs, images, epoch)
                 
                 # Update metrics
                 total_loss += loss_dict['total_loss']
-                total_recon_loss += loss_dict['recon_loss']
+                total_recon_loss += loss_dict['reconstruction_loss']
                 total_kl_loss += loss_dict['kl_loss']
         
         # Calculate average losses
@@ -407,15 +410,6 @@ class VAETrainer:
         self.tb_writer.add_images('Real_Images', real_images, epoch)
         self.tb_writer.add_images('Reconstructed_Images', reconstructed, epoch)
         self.tb_writer.add_images('Generated_Images', generated, epoch)
-        
-        if self.use_wandb:
-            import wandb
-            wandb.log({
-                'Real_Images': [wandb.Image(img.permute(1, 2, 0).cpu().numpy()) for img in real_images],
-                'Reconstructed_Images': [wandb.Image(img.permute(1, 2, 0).cpu().numpy()) for img in reconstructed],
-                'Generated_Images': [wandb.Image(img.permute(1, 2, 0).cpu().numpy()) for img in generated],
-                'epoch': epoch
-            })
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         """Save model checkpoint."""
@@ -462,10 +456,10 @@ class VAETrainer:
     
     def train(self):
         """Main training loop."""
-        self.logger.info(f'Starting VAE training for {self.config["training"]["max_epochs"]} epochs')
+        self.logger.info(f'Starting VAE training for {self.config["training"]["vae_epochs"]} epochs')
         
-        for epoch in range(self.current_epoch, self.config['training']['max_epochs']):
-            self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["max_epochs"]}')
+        for epoch in range(self.current_epoch, self.config['training']['vae_epochs']):
+            self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["vae_epochs"]}')
             
             # Train
             train_metrics = self.train_epoch(epoch)
@@ -495,21 +489,6 @@ class VAETrainer:
             self.tb_writer.add_scalar('Val/Recon_Loss', val_metrics['recon_loss'], epoch)
             self.tb_writer.add_scalar('Val/KL_Loss', val_metrics['kl_loss'], epoch)
             
-            # WandB logging
-            if self.use_wandb:
-                import wandb
-                wandb.log({
-                    'train/loss': train_metrics['loss'],
-                    'train/recon_loss': train_metrics['recon_loss'],
-                    'train/kl_loss': train_metrics['kl_loss'],
-                    'train/kl_weight': kl_weight,
-                    'val/loss': val_metrics['loss'],
-                    'val/recon_loss': val_metrics['recon_loss'],
-                    'val/kl_loss': val_metrics['kl_loss'],
-                    'epoch': epoch,
-                    'lr': self.scheduler.get_last_lr()[0]
-                })
-            
             # Generate samples
             if epoch % self.config['training']['sample_every'] == 0:
                 self.generate_samples(epoch)
@@ -526,10 +505,6 @@ class VAETrainer:
         
         self.logger.info('VAE training completed!')
         self.tb_writer.close()
-        
-        if self.use_wandb:
-            import wandb
-            wandb.finish()
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -545,7 +520,7 @@ if __name__ == "__main__":
     config = load_config(config_path)
     
     # Create VAE trainer
-    trainer = VAETrainer(config, use_wandb=False, experiment_name="pokemon_vae_stage1")
+    trainer = VAETrainer(config, experiment_name="pokemon_vae_stage1")
     
     # Start training
     trainer.train()
