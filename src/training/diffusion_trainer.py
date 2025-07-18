@@ -323,8 +323,8 @@ class DiffusionTrainer:
             
             # Log to TensorBoard
             if batch_idx % self.config['training']['log_every'] == 0:
-                self.writer.add_scalar('Train/Loss', loss.item(), self.global_step)
-                self.writer.add_scalar('Train/Learning_Rate', self.optimizer.param_groups[0]['lr'], self.global_step)
+                self.writer.add_scalar('Diffusion Train/Loss', loss.item(), self.global_step)
+                self.writer.add_scalar('Diffusion Train/Learning_Rate', self.optimizer.param_groups[0]['lr'], self.global_step)
         
         avg_loss = total_loss / num_batches
         return {'train_loss': avg_loss}
@@ -373,7 +373,7 @@ class DiffusionTrainer:
         avg_loss = total_loss / num_batches
         
         # Log to TensorBoard
-        self.writer.add_scalar('Val/Loss', avg_loss, epoch)
+        self.writer.add_scalar('Diffusion Val/Loss', avg_loss, epoch)
         
         return {'val_loss': avg_loss}
     
@@ -419,7 +419,7 @@ class DiffusionTrainer:
                 img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{i}.png")
                 
                 # Log to TensorBoard
-                self.writer.add_image(f'Generated/Sample_{i}', img.cpu(), epoch)
+                self.writer.add_image(f'Diffusion Generated/Sample_{i}', img.cpu(), epoch)
                 
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
@@ -443,6 +443,12 @@ class DiffusionTrainer:
             best_path = self.checkpoint_dir / "diffusion_best_model.pth"
             torch.save(checkpoint, best_path)
             self.logger.info(f"New best model saved at epoch {epoch}")
+            
+        checkpoints = list(self.checkpoint_dir.glob('diffusion_epoch_*.pth'))
+        if len(checkpoints) > 2:
+            checkpoints.sort()
+            for old_checkpoint in checkpoints[:-2]:
+                old_checkpoint.unlink()
         
         self.logger.info(f"Checkpoint saved: {checkpoint_path}")
     

@@ -575,9 +575,9 @@ class FinalTrainer:
         
         # Keep only recent checkpoints
         checkpoints = list(self.checkpoint_dir.glob('final_checkpoint_epoch_*.pth'))
-        if len(checkpoints) > 5:
+        if len(checkpoints) > 2:
             checkpoints.sort()
-            for old_checkpoint in checkpoints[:-5]:
+            for old_checkpoint in checkpoints[:-2]:
                 old_checkpoint.unlink()
     
     def load_checkpoint(self, checkpoint_path: str):
@@ -629,12 +629,12 @@ class FinalTrainer:
                            f'MSE: {val_metrics["mse_loss"]:.4f}')
             
             # TensorBoard logging
-            self.tb_writer.add_scalar('Train/Loss', train_metrics['loss'], epoch)
-            self.tb_writer.add_scalar('Train/L1_Loss', train_metrics['l1_loss'], epoch)
-            self.tb_writer.add_scalar('Train/MSE_Loss', train_metrics['mse_loss'], epoch)
-            self.tb_writer.add_scalar('Val/Loss', val_metrics['loss'], epoch)
-            self.tb_writer.add_scalar('Val/L1_Loss', val_metrics['l1_loss'], epoch)
-            self.tb_writer.add_scalar('Val/MSE_Loss', val_metrics['mse_loss'], epoch)
+            self.tb_writer.add_scalar('Final Train/Loss', train_metrics['loss'], epoch)
+            self.tb_writer.add_scalar('Final Train/L1_Loss', train_metrics['l1_loss'], epoch)
+            self.tb_writer.add_scalar('Final Train/MSE_Loss', train_metrics['mse_loss'], epoch)
+            self.tb_writer.add_scalar('Final Val/Loss', val_metrics['loss'], epoch)
+            self.tb_writer.add_scalar('Final Val/L1_Loss', val_metrics['l1_loss'], epoch)
+            self.tb_writer.add_scalar('Final Val/MSE_Loss', val_metrics['mse_loss'], epoch)
             
             # Generate samples
             if epoch % self.config['training']['sample_every'] == 0:
