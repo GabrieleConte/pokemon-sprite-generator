@@ -403,8 +403,8 @@ class VAETrainer:
         
         # Log to tensorboard
         self.tb_writer.add_images('Real_Images', real_images, epoch)
-        self.tb_writer.add_images('Reconstructed_Images', reconstructed, epoch)
-        self.tb_writer.add_images('Generated_Images', generated, epoch)
+        self.tb_writer.add_images('VAE Reconstructed_Images', reconstructed, epoch)
+        self.tb_writer.add_images('VAE Generated_Images', generated, epoch)
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         """Save model checkpoint."""
@@ -429,9 +429,9 @@ class VAETrainer:
         
         # Keep only recent checkpoints
         checkpoints = list(self.checkpoint_dir.glob('vae_checkpoint_epoch_*.pth'))
-        if len(checkpoints) > 5:
+        if len(checkpoints) > 2:
             checkpoints.sort()
-            for old_checkpoint in checkpoints[:-5]:
+            for old_checkpoint in checkpoints[:-2]:
                 old_checkpoint.unlink()
     
     def load_checkpoint(self, checkpoint_path: str):
@@ -476,13 +476,13 @@ class VAETrainer:
                            f'KL: {val_metrics["kl_loss"]:.4f}')
             
             # TensorBoard logging
-            self.tb_writer.add_scalar('Train/Loss', train_metrics['loss'], epoch)
-            self.tb_writer.add_scalar('Train/Recon_Loss', train_metrics['recon_loss'], epoch)
-            self.tb_writer.add_scalar('Train/KL_Loss', train_metrics['kl_loss'], epoch)
-            self.tb_writer.add_scalar('Train/KL_Weight', kl_weight, epoch)
-            self.tb_writer.add_scalar('Val/Loss', val_metrics['loss'], epoch)
-            self.tb_writer.add_scalar('Val/Recon_Loss', val_metrics['recon_loss'], epoch)
-            self.tb_writer.add_scalar('Val/KL_Loss', val_metrics['kl_loss'], epoch)
+            self.tb_writer.add_scalar('VAE Train/Loss', train_metrics['loss'], epoch)
+            self.tb_writer.add_scalar('VAE Train/Recon_Loss', train_metrics['recon_loss'], epoch)
+            self.tb_writer.add_scalar('VAE Train/KL_Loss', train_metrics['kl_loss'], epoch)
+            self.tb_writer.add_scalar('VAE Train/KL_Weight', kl_weight, epoch)
+            self.tb_writer.add_scalar('VAE Val/Loss', val_metrics['loss'], epoch)
+            self.tb_writer.add_scalar('VAE Val/Recon_Loss', val_metrics['recon_loss'], epoch)
+            self.tb_writer.add_scalar('VAE Val/KL_Loss', val_metrics['kl_loss'], epoch)
             
             # Generate samples
             if epoch % self.config['training']['sample_every'] == 0:
