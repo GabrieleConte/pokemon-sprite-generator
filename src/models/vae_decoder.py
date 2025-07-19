@@ -245,39 +245,39 @@ class VAEDecoder(nn.Module):
         return x
 
 
-class NoiseScheduler:
-    """Noise scheduler for diffusion-like training."""
+# class NoiseScheduler:
+#     """Noise scheduler for diffusion-like training."""
     
-    def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
-        self.num_timesteps = num_timesteps
+#     def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
+#         self.num_timesteps = num_timesteps
         
-        # Linear schedule
-        self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
-        self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+#         # Linear schedule
+#         self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
+#         self.alphas = 1.0 - self.betas
+#         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         
-    def add_noise(self, x_0: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
-        """Add noise to clean latents."""
-        # Ensure tensors are on the same device
-        device = x_0.device
-        if self.alphas_cumprod.device != device:
-            self.to(device)
+#     def add_noise(self, x_0: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
+#         """Add noise to clean latents."""
+#         # Ensure tensors are on the same device
+#         device = x_0.device
+#         if self.alphas_cumprod.device != device:
+#             self.to(device)
             
-        sqrt_alpha_cumprod = self.alphas_cumprod[timesteps] ** 0.5
-        sqrt_one_minus_alpha_cumprod = (1 - self.alphas_cumprod[timesteps]) ** 0.5
+#         sqrt_alpha_cumprod = self.alphas_cumprod[timesteps] ** 0.5
+#         sqrt_one_minus_alpha_cumprod = (1 - self.alphas_cumprod[timesteps]) ** 0.5
         
-        # Reshape for broadcasting
-        sqrt_alpha_cumprod = sqrt_alpha_cumprod.view(-1, 1, 1, 1)
-        sqrt_one_minus_alpha_cumprod = sqrt_one_minus_alpha_cumprod.view(-1, 1, 1, 1)
+#         # Reshape for broadcasting
+#         sqrt_alpha_cumprod = sqrt_alpha_cumprod.view(-1, 1, 1, 1)
+#         sqrt_one_minus_alpha_cumprod = sqrt_one_minus_alpha_cumprod.view(-1, 1, 1, 1)
         
-        return sqrt_alpha_cumprod * x_0 + sqrt_one_minus_alpha_cumprod * noise
+#         return sqrt_alpha_cumprod * x_0 + sqrt_one_minus_alpha_cumprod * noise
         
-    def to(self, device):
-        """Move scheduler to device."""
-        self.betas = self.betas.to(device)
-        self.alphas = self.alphas.to(device)
-        self.alphas_cumprod = self.alphas_cumprod.to(device)
-        return self
+#     def to(self, device):
+#         """Move scheduler to device."""
+#         self.betas = self.betas.to(device)
+#         self.alphas = self.alphas.to(device)
+#         self.alphas_cumprod = self.alphas_cumprod.to(device)
+#         return self
 
 
 class PokemonVAE(nn.Module):
@@ -290,7 +290,7 @@ class PokemonVAE(nn.Module):
         
         self.encoder = VAEEncoder(input_channels=3, latent_dim=latent_dim)
         self.decoder = VAEDecoder(latent_dim=latent_dim, text_dim=text_dim, output_channels=3)
-        self.noise_scheduler = NoiseScheduler()
+        # self.noise_scheduler = NoiseScheduler()
         
     def forward(self, images: torch.Tensor, text_emb: torch.Tensor, mode: str = 'train') -> dict:
         """
@@ -308,13 +308,13 @@ class PokemonVAE(nn.Module):
             # Encode images to latent space
             latent, mu, logvar = self.encoder(images)
             
-            # Add noise for diffusion-like training
-            noise = torch.randn_like(latent)
-            timesteps = torch.randint(0, self.noise_scheduler.num_timesteps, (latent.size(0),), device=latent.device)
-            noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
+            # Add noise for diffusion-like training -- NO MORE USED
+            # noise = torch.randn_like(latent)
+            # timesteps = torch.randint(0, self.noise_scheduler.num_timesteps, (latent.size(0),), device=latent.device)
+            # noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
             
             # Decode with text conditioning
-            reconstructed = self.decoder(noisy_latent, text_emb)
+            reconstructed = self.decoder(latent, text_emb)
             
             # Compute losses
             recon_loss = F.mse_loss(reconstructed, images)
@@ -342,8 +342,8 @@ class PokemonVAE(nn.Module):
                 'latent': latent
             }
     
-    def to_device(self, device):
-        """Move model to device."""
-        super().to(device)
-        self.noise_scheduler.to(device)
-        return self
+    # def to_device(self, device):
+    #     """Move model to device."""
+    #     super().to(device)
+    #     self.noise_scheduler.to(device)
+    #     return self

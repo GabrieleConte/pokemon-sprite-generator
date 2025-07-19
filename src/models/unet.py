@@ -6,7 +6,6 @@ Based on Stable Diffusion's U-Net with text conditioning.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
 import math
 
 
