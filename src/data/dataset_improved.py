@@ -43,19 +43,34 @@ class PokemonDataset(Dataset):
         self.augment = augment
         self.background_color = self._parse_background_color(background_color)
         
-        # Load CSV data
+        # Load CSV data - support both original pokemon.csv and text_description_concat.csv
         try:
-            self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
+            # First try reading as semicolon-separated (text_description_concat.csv format)
+            self.data = pd.read_csv(csv_path, sep=';', encoding='utf-8', header=None)
+            if len(self.data.columns) == 2:
+                # text_description_concat.csv format
+                self.data.columns = ['english_name', 'description']
+                # Add national_number as index + 1
+                self.data['national_number'] = range(1, len(self.data) + 1)
+                # Reorder columns
+                self.data = self.data[['national_number', 'english_name', 'description']]
+            else:
+                # Fall back to tab-separated
+                self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-8')
         except UnicodeDecodeError:
             try:
-                self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-8')
+                self.data = pd.read_csv(csv_path, sep=';', encoding='utf-16', header=None)
+                if len(self.data.columns) == 2:
+                    self.data.columns = ['english_name', 'description']
+                    self.data['national_number'] = range(1, len(self.data) + 1)
+                    self.data = self.data[['national_number', 'english_name', 'description']]
+                else:
+                    self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
             except UnicodeDecodeError:
-                self.data = pd.read_csv(csv_path, sep='\t', encoding='latin-1')
-                # Try with UTF-16 encoding (common for Windows files)
-                self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
-            except:
-                # Try with latin-1 encoding
-                self.data = pd.read_csv(csv_path, sep='\t', encoding='latin-1')
+                try:
+                    self.data = pd.read_csv(csv_path, sep='\t', encoding='utf-16')
+                except:
+                    self.data = pd.read_csv(csv_path, sep='\t', encoding='latin-1')
         
         # Check if we have the expected columns
         required_columns = ['national_number', 'english_name', 'description']
@@ -208,8 +223,6 @@ class PokemonDataset(Dataset):
             'full_description': full_description,
             'national_number': int(row['national_number']),
             'name': str(row['english_name']),
-            'primary_type': str(row['primary_type']),
-            'secondary_type': str(row['secondary_type']) if pd.notna(row['secondary_type']) else '',
         }
     
     def _clean_description(self, description: str) -> str:
@@ -228,22 +241,10 @@ class PokemonDataset(Dataset):
         """Create a comprehensive description including type and other info."""
         parts = []
         
-        # Add type information
-        if pd.notna(row['primary_type']):
-            type_info = f"A {row['primary_type']} type"
-            if pd.notna(row['secondary_type']):
-                type_info += f" and {row['secondary_type']} type"
-            type_info += " pokemon"
-            parts.append(type_info)
-        
         # Add name
-        parts.append(f"named {row['english_name']}")
+        parts.append(f"Pokemon named {row['english_name']}")
         
-        # Add classification if available
-        if pd.notna(row['classification']):
-            parts.append(f"classified as {row['classification']}")
-        
-        # Add original description
+        # Add original description which already contains type info in text_description_concat.csv
         description = self._clean_description(row['description'])
         if description:
             parts.append(description)

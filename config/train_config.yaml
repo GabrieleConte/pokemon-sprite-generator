@@ -1,4 +1,4 @@
-# Configuration for training the Pokemon sprite generator with VAE architecture
+# Configuration for training the Pokemon sprite generator
 
 # Experiment settings
 experiment_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments"
@@ -7,10 +7,7 @@ experiment_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experim
 model:
   bert_model: "prajjwal1/bert-mini"
   text_embedding_dim: 256
-  noise_dim: 100
-  latent_dim: 512
-  nhead: 4
-  num_encoder_layers: 2
+  latent_dim: 1024  # 1024 channels for 4x4 latent space
   
   # U-Net parameters
   time_emb_dim: 128
@@ -23,81 +20,50 @@ model:
 
 # Data configuration
 data:
-  csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/pokemon.csv"
+  csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
   image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
-  batch_size: 16
+  batch_size: 8  # Reduced for better GPU memory usage
   image_size: 215
-  num_workers: 8
+  num_workers: 4  # Reduced for stability
   pin_memory: true
-  train_split: 0.8
   val_split: 0.15
   test_split: 0.05
 
 # Training configuration
 training:
-  max_epochs: 100
+  # Stage-specific epochs (optimized for practical training)
+  vae_epochs: 50      # VAE foundation training
+  diffusion_epochs: 40  # U-Net training  
+  final_epochs: 60    # Final joint training
   
-  # VAE training (Stage 1)
-  vae_epochs: 1
+  # KL annealing for VAE (prevents posterior collapse)
+  kl_anneal_start: 0
+  kl_anneal_end: 20   # Shorter annealing period
+  kl_weight_start: 0.0
+  kl_weight_end: 0.1  # Lower final KL weight for better generation
+  free_bits: 0.5
   
-  # Diffusion training (Stage 2)  
-  diffusion_epochs: 1
+  # CLIP loss weight
+  clip_weight: 0.3    # Increased for better text-image alignment
   
-  # Final training (Stage 3)
-  final_epochs: 1
+  # Training phases for final stage
+  phase1_epochs: 30   # Text encoder fine-tuning
   
-  # Loss weights
-  reconstruction_weight: 1.0
-  perceptual_weight: 0.1
-  kl_weight: 0.01
-  
-  # KL annealing to prevent posterior collapse
-  kl_anneal_start: 0      # Start KL annealing from epoch 0
-  kl_anneal_end: 30       # End KL annealing at epoch 30
-  kl_weight_start: 0.0    # Start with no KL weight
-  kl_weight_end: 0.5      # End with moderate KL weight
-  free_bits: 0.5          # Minimum KL bits per dimension
-  
-  # Diffusion parameters
-  num_timesteps: 1000
-  beta_start: 0.0001
-  beta_end: 0.02
-  
-  # Gradient clipping
-  grad_clip: 1.0
-  
-  # Checkpoints
+  # Logging and checkpoints
+  log_every: 25       # More frequent logging
   save_every: 10
-  checkpoint_dir: "checkpoints"
-  
-  # Logging
-  log_every: 50
-  log_dir: "logs"
-  
-  # Sampling
   sample_every: 5
 
 # Optimization
 optimization:
   optimizer: "adamw"
-  learning_rate: 0.0002
-  text_encoder_lr: 0.0001  # Lower LR for text encoder fine-tuning
-  vae_decoder_lr: 0.0001   # Lower LR for VAE decoder fine-tuning
-  beta1: 0.5
+  learning_rate: 1e-4      # Conservative learning rate
+  text_encoder_lr: 5e-5    # Lower for fine-tuning
+  vae_decoder_lr: 5e-5     # Lower for fine-tuning
+  beta1: 0.9               # Standard Adam betas
   beta2: 0.999
-  weight_decay: 0.0001
-  grad_clip: 1.0
+  weight_decay: 1e-4       # Regularization
   scheduler: "cosine"
-  max_epochs: 100
-  step_size: 30
-  gamma: 0.1
-  patience: 10
 
-# Logging and monitoring
-logging:
-  log_interval: 50
-  sample_interval: 5
-  checkpoint_interval: 10
-  
 # Device
-device: "mps"  # or "cpu"
+device: "mps"

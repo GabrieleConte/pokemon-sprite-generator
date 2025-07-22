@@ -11,6 +11,7 @@ import yaml
 from src.models.vae_decoder import VAEEncoder, VAEDecoder
 from src.models.text_encoder import TextEncoder
 from src.models.unet import UNet
+from src.models.clip_loss import CLIPLoss
 from src.data import create_data_loaders
 from src.utils import get_device
 
@@ -95,7 +96,7 @@ class FinalPokemonGenerator(nn.Module):
         # VAE Encoder (frozen)
         self.vae_encoder = VAEEncoder(
             input_channels=3,
-            latent_dim=text_encoder_config.get('latent_dim', 512)
+            latent_dim=text_encoder_config.get('latent_dim', 1024)
         )
         
         # VAE Decoder (frozen initially, will be unfrozen for fine-tuning)
@@ -144,9 +145,7 @@ class FinalPokemonGenerator(nn.Module):
         # Text encoder (will be fine-tuned)
         self.text_encoder = TextEncoder(
             model_name=text_encoder_config['bert_model'],
-            hidden_dim=text_encoder_config['text_embedding_dim'],
-            nhead=text_encoder_config['nhead'],
-            num_encoder_layers=text_encoder_config['num_encoder_layers']
+            hidden_dim=text_encoder_config['text_embedding_dim']
         )
         
         # Load text encoder weights if available
@@ -313,9 +312,15 @@ class FinalTrainer:
             text_encoder_config=model_config
         ).to(self.device)
         
+        # CLIP loss for text-image alignment
+        self.clip_loss = CLIPLoss(
+            device=str(self.device)
+        ).to(self.device)
+        
         self.logger.info(f"Final generator initialized")
         self.logger.info(f"Total parameters: {sum(p.numel() for p in self.generator.parameters())}")
         self.logger.info(f"Trainable parameters: {sum(p.numel() for p in self.generator.parameters() if p.requires_grad)}")
+        self.logger.info(f"CLIP loss parameters (frozen): {sum(p.numel() for p in self.clip_loss.parameters())}")
         
     def setup_data_loaders(self):
         """Setup data loaders for training, validation, and testing."""
@@ -412,10 +417,13 @@ class FinalTrainer:
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         """Train for one epoch."""
         self.generator.train()
+        # CLIP loss is always in eval mode (frozen)
+        self.clip_loss.eval()
         
         total_loss = 0.0
         total_l1_loss = 0.0
         total_mse_loss = 0.0
+        total_clip_loss = 0.0
         num_batches = len(self.data_loaders['train'])
         
         for batch_idx, batch in enumerate(self.data_loaders['train']):
@@ -425,30 +433,41 @@ class FinalTrainer:
             # Forward pass
             generated_images = self.generator(descriptions)
             
-            # Compute loss
-            loss, loss_dict = self.compute_generation_loss(generated_images, images)
+            # Compute generation loss
+            gen_loss, gen_loss_dict = self.compute_generation_loss(generated_images, images)
+            
+            # Compute CLIP alignment loss
+            clip_loss = self.clip_loss(generated_images, descriptions)
+            
+            # Combined loss
+            clip_weight = self.config['training'].get('clip_weight', 0.1)
+            total_loss_value = gen_loss + clip_weight * clip_loss
             
             # Backward pass
             self.optimizer.zero_grad()
-            loss.backward()
+            total_loss_value.backward()
             
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
+            # Gradient clipping (only for trainable parameters)
+            torch.nn.utils.clip_grad_norm_(
+                self.generator.parameters(), 
+                max_norm=1.0
+            )
             
             self.optimizer.step()
             
             # Update metrics
-            total_loss += loss_dict['total_loss']
-            total_l1_loss += loss_dict['l1_loss']
-            total_mse_loss += loss_dict['mse_loss']
+            total_loss += total_loss_value.item()
+            total_l1_loss += gen_loss_dict['l1_loss']
+            total_mse_loss += gen_loss_dict['mse_loss']
+            total_clip_loss += clip_loss.item()
             
             # Log progress
             if batch_idx % self.config['training']['log_every'] == 0:
                 self.logger.info(f'Epoch {epoch}, Batch {batch_idx}/{num_batches}, '
                                f'Phase: {self.training_phase}, '
-                               f'Loss: {loss_dict["total_loss"]:.4f}, '
-                               f'L1: {loss_dict["l1_loss"]:.4f}, '
-                               f'MSE: {loss_dict["mse_loss"]:.4f}')
+                               f'Total: {total_loss_value.item():.4f}, '
+                               f'Gen: {gen_loss.item():.4f}, '
+                               f'CLIP: {clip_loss.item():.4f}')
             
             self.global_step += 1
         
@@ -456,11 +475,13 @@ class FinalTrainer:
         avg_loss = total_loss / num_batches
         avg_l1_loss = total_l1_loss / num_batches
         avg_mse_loss = total_mse_loss / num_batches
+        avg_clip_loss = total_clip_loss / num_batches
         
         return {
             'loss': avg_loss,
             'l1_loss': avg_l1_loss,
-            'mse_loss': avg_mse_loss
+            'mse_loss': avg_mse_loss,
+            'clip_loss': avg_clip_loss
         }
     
     def validate_epoch(self, epoch: int) -> Dict[str, float]:
@@ -538,19 +559,58 @@ class FinalTrainer:
         self.tb_writer.add_images('Generated_Images', generated_images, epoch)
     
     def switch_to_joint_training(self):
-        """Switch to joint training mode (fine-tune both text encoder and VAE decoder)."""
-        self.logger.info("Switching to joint training mode - unfreezing VAE decoder")
+        """Switch to joint training mode - unfreeze all parameters."""
+        self.logger.info("Switching to joint training mode - unfreezing all parameters")
+        
+        # Unfreeze all components
         self.generator.unfreeze_vae_decoder()
+        self.generator.unfreeze_unet()
         self.training_phase = 'joint'
         
-        # Add VAE decoder parameters to optimizer
-        vae_params = {
-            'params': self.generator.vae_decoder.parameters(),
-            'lr': self.config['optimization']['vae_decoder_lr'],
-            'name': 'vae_decoder'
-        }
+        # Create new optimizer with all parameters
+        opt_config = self.config['optimization']
+        param_groups = [
+            {
+                'params': self.generator.text_encoder.parameters(),
+                'lr': opt_config['text_encoder_lr'],
+                'name': 'text_encoder'
+            },
+            {
+                'params': self.generator.vae_decoder.parameters(),
+                'lr': opt_config.get('vae_decoder_lr', opt_config['text_encoder_lr'] * 0.1),
+                'name': 'vae_decoder'
+            },
+            {
+                'params': self.generator.unet.parameters(),
+                'lr': opt_config.get('unet_lr', opt_config['text_encoder_lr'] * 0.1),
+                'name': 'unet'
+            }
+        ]
         
-        self.optimizer.add_param_group(vae_params)
+        # Create new optimizer
+        if opt_config['optimizer'] == 'adam':
+            self.optimizer = optim.Adam(
+                param_groups,
+                betas=(opt_config['beta1'], opt_config['beta2'])
+            )
+        elif opt_config['optimizer'] == 'adamw':
+            self.optimizer = optim.AdamW(
+                param_groups,
+                weight_decay=opt_config['weight_decay']
+            )
+        
+        # Recreate scheduler
+        if opt_config['scheduler'] == 'cosine':
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, 
+                T_max=self.config['training']['final_epochs']
+            )
+        elif opt_config['scheduler'] == 'step':
+            self.scheduler = optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=opt_config['step_size'],
+                gamma=opt_config['gamma']
+            )
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         """Save model checkpoint."""
@@ -623,7 +683,8 @@ class FinalTrainer:
             self.logger.info(f'Phase: {self.training_phase}')
             self.logger.info(f'Train - Loss: {train_metrics["loss"]:.4f}, '
                            f'L1: {train_metrics["l1_loss"]:.4f}, '
-                           f'MSE: {train_metrics["mse_loss"]:.4f}')
+                           f'MSE: {train_metrics["mse_loss"]:.4f}, '
+                           f'CLIP: {train_metrics["clip_loss"]:.4f}')
             self.logger.info(f'Val - Loss: {val_metrics["loss"]:.4f}, '
                            f'L1: {val_metrics["l1_loss"]:.4f}, '
                            f'MSE: {val_metrics["mse_loss"]:.4f}')
@@ -632,6 +693,7 @@ class FinalTrainer:
             self.tb_writer.add_scalar('Final Train/Loss', train_metrics['loss'], epoch)
             self.tb_writer.add_scalar('Final Train/L1_Loss', train_metrics['l1_loss'], epoch)
             self.tb_writer.add_scalar('Final Train/MSE_Loss', train_metrics['mse_loss'], epoch)
+            self.tb_writer.add_scalar('Final Train/CLIP_Loss', train_metrics['clip_loss'], epoch)
             self.tb_writer.add_scalar('Final Val/Loss', val_metrics['loss'], epoch)
             self.tb_writer.add_scalar('Final Val/L1_Loss', val_metrics['l1_loss'], epoch)
             self.tb_writer.add_scalar('Final Val/MSE_Loss', val_metrics['mse_loss'], epoch)

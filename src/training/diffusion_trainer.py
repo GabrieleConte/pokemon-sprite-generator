@@ -131,9 +131,7 @@ class DiffusionTrainer:
         # Text encoder (frozen during diffusion training)
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
-            hidden_dim=model_config['text_embedding_dim'],
-            nhead=model_config['nhead'],
-            num_encoder_layers=model_config['num_encoder_layers']
+            hidden_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
         # Load pre-trained VAE
@@ -143,11 +141,11 @@ class DiffusionTrainer:
         # VAE Encoder and Decoder (frozen during diffusion training)
         self.vae_encoder = VAEEncoder(
             input_channels=3,
-            latent_dim=model_config.get('latent_dim', 512)
+            latent_dim=model_config.get('latent_dim', 1024)
         ).to(self.device)
         
         self.vae_decoder = VAEDecoder(
-            latent_dim=model_config.get('latent_dim', 512),
+            latent_dim=model_config.get('latent_dim', 1024),
             text_dim=model_config['text_embedding_dim'],
             output_channels=3
         ).to(self.device)
@@ -180,9 +178,9 @@ class DiffusionTrainer:
         for param in self.text_encoder.parameters():
             param.requires_grad = False
         
-        # U-Net for denoising
+        # U-Net for diffusion denoising
         self.unet = UNet(
-            latent_dim=model_config.get('latent_dim', 512),
+            latent_dim=model_config.get('latent_dim', 1024),
             text_dim=model_config['text_embedding_dim'],
             time_emb_dim=model_config.get('time_emb_dim', 128),
             num_heads=model_config.get('num_heads', 8)
@@ -392,7 +390,7 @@ class DiffusionTrainer:
             text_emb = self.text_encoder(sample_descriptions)
             
             # Start from pure noise
-            latent_shape = (num_samples, self.config['model'].get('latent_dim', 512), 3, 3)
+            latent_shape = (num_samples, self.config['model'].get('latent_dim', 1024), 4, 4)
             latent = torch.randn(latent_shape, device=self.device)
             
             # Simple denoising (in practice, you'd use DDPM sampling)

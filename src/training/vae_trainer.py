@@ -100,9 +100,7 @@ class VAETrainer:
         # Text encoder (frozen during VAE training)
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
-            hidden_dim=model_config['text_embedding_dim'],
-            nhead=model_config['nhead'],
-            num_encoder_layers=model_config['num_encoder_layers']
+            hidden_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
         # Freeze text encoder for VAE training
@@ -111,7 +109,7 @@ class VAETrainer:
             
         # VAE model
         self.vae = PokemonVAE(
-            latent_dim=model_config.get('latent_dim', 512),
+            latent_dim=model_config.get('latent_dim', 1024),
             text_dim=model_config['text_embedding_dim']
         ).to(self.device)
         

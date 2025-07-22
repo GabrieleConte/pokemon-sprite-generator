@@ -66,45 +66,46 @@ class CrossAttentionBlock(nn.Module):
 
 
 class VAEEncoder(nn.Module):
-    """VAE encoder that encodes Pokemon images to latent space."""
+    """VAE encoder that encodes Pokemon images to latent space with gradual downsampling."""
     
-    def __init__(self, input_channels: int = 3, latent_dim: int = 512):
+    def __init__(self, input_channels: int = 3, latent_dim: int = 1024):
         super().__init__()
         self.latent_dim = latent_dim
         
-        # Encoder network
+        # More gradual encoder network: 215x215 -> 4x4
         self.encoder = nn.Sequential(
             # 215x215 -> 107x107
-            nn.Conv2d(input_channels, 64, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(input_channels, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            ResNetBlock(32, 32),
+            
+            # 107x107 -> 53x53
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(64, 64),
             
-            # 107x107 -> 53x53
+            # 53x53 -> 26x26
             nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(128, 128),
             
-            # 53x53 -> 26x26
+            # 26x26 -> 13x13
             nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(256, 256),
             
-            # 26x26 -> 13x13
+            # 13x13 -> 6x6
             nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(512, 512),
             
-            # 13x13 -> 6x6
-            nn.Conv2d(512, 512, kernel_size=4, stride=2, padding=1),
+            # 6x6 -> 4x4
+            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
             ResNetBlock(512, 512),
-            
-            # 6x6 -> 3x3
-            nn.Conv2d(512, 512, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
         )
         
-        # Latent space projections
+        # Latent space projections for 4x4 output
         self.mu_proj = nn.Conv2d(512, latent_dim, kernel_size=3, padding=1)
         self.logvar_proj = nn.Conv2d(512, latent_dim, kernel_size=3, padding=1)
         
@@ -116,9 +117,9 @@ class VAEEncoder(nn.Module):
             x: Input image [batch_size, 3, 215, 215]
             
         Returns:
-            latent: Sampled latent vector [batch_size, latent_dim, 3, 3]
-            mu: Mean of latent distribution [batch_size, latent_dim, 3, 3]
-            logvar: Log variance of latent distribution [batch_size, latent_dim, 3, 3]
+            latent: Sampled latent vector [batch_size, latent_dim, 4, 4]
+            mu: Mean of latent distribution [batch_size, latent_dim, 4, 4]
+            logvar: Log variance of latent distribution [batch_size, latent_dim, 4, 4]
         """
         encoded = self.encoder(x)
         
@@ -134,49 +135,49 @@ class VAEEncoder(nn.Module):
 
 
 class VAEDecoder(nn.Module):
-    """VAE decoder that generates Pokemon images from latent space with text conditioning."""
+    """VAE decoder that generates Pokemon images from latent space with text conditioning and gradual upsampling."""
     
-    def __init__(self, latent_dim: int = 512, text_dim: int = 256, output_channels: int = 3):
+    def __init__(self, latent_dim: int = 1024, text_dim: int = 256, output_channels: int = 3):
         super().__init__()
         self.latent_dim = latent_dim
         self.text_dim = text_dim
         
-        # Initial latent processing
+        # Initial latent processing - reduce to manageable channels
         self.latent_proj = nn.Conv2d(latent_dim, 512, kernel_size=3, padding=1)
         
-        # Decoder blocks with cross-attention - store layers individually
-        # Block 1: 3x3 -> 6x6
+        # Gradual decoder blocks with cross-attention: 4x4 -> 215x215
+        # Block 1: 4x4 -> 7x7
         self.block1_resnet1 = ResNetBlock(512, 512)
         self.block1_attn = CrossAttentionBlock(512, text_dim)
         self.block1_resnet2 = ResNetBlock(512, 512)
-        self.block1_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.block1_upsample = nn.Upsample(size=(7, 7), mode='bilinear', align_corners=False)
         
-        # Block 2: 6x6 -> 13x13
-        self.block2_resnet1 = ResNetBlock(512, 512)
-        self.block2_attn = CrossAttentionBlock(512, text_dim)
-        self.block2_resnet2 = ResNetBlock(512, 512)
-        self.block2_upsample = nn.Upsample(size=(13, 13), mode='bilinear', align_corners=False)
+        # Block 2: 7x7 -> 14x14
+        self.block2_resnet1 = ResNetBlock(512, 256)
+        self.block2_attn = CrossAttentionBlock(256, text_dim)
+        self.block2_resnet2 = ResNetBlock(256, 256)
+        self.block2_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        # Block 3: 13x13 -> 26x26
-        self.block3_resnet1 = ResNetBlock(512, 256)
-        self.block3_attn = CrossAttentionBlock(256, text_dim)
-        self.block3_resnet2 = ResNetBlock(256, 256)
-        self.block3_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        # Block 3: 14x14 -> 27x27
+        self.block3_resnet1 = ResNetBlock(256, 128)
+        self.block3_attn = CrossAttentionBlock(128, text_dim)
+        self.block3_resnet2 = ResNetBlock(128, 128)
+        self.block3_upsample = nn.Upsample(size=(27, 27), mode='bilinear', align_corners=False)
         
-        # Block 4: 26x26 -> 53x53
-        self.block4_resnet1 = ResNetBlock(256, 128)
-        self.block4_attn = CrossAttentionBlock(128, text_dim)
-        self.block4_resnet2 = ResNetBlock(128, 128)
-        self.block4_upsample = nn.Upsample(size=(53, 53), mode='bilinear', align_corners=False)
+        # Block 4: 27x27 -> 54x54
+        self.block4_resnet1 = ResNetBlock(128, 64)
+        self.block4_attn = CrossAttentionBlock(64, text_dim)
+        self.block4_resnet2 = ResNetBlock(64, 64)
+        self.block4_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        # Block 5: 53x53 -> 107x107
-        self.block5_resnet1 = ResNetBlock(128, 64)
-        self.block5_attn = CrossAttentionBlock(64, text_dim)
-        self.block5_resnet2 = ResNetBlock(64, 64)
-        self.block5_upsample = nn.Upsample(size=(107, 107), mode='bilinear', align_corners=False)
+        # Block 5: 54x54 -> 108x108
+        self.block5_resnet1 = ResNetBlock(64, 32)
+        self.block5_attn = CrossAttentionBlock(32, text_dim)
+        self.block5_resnet2 = ResNetBlock(32, 32)
+        self.block5_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        # Block 6: 107x107 -> 215x215
-        self.block6_resnet1 = ResNetBlock(64, 32)
+        # Block 6: 108x108 -> 215x215
+        self.block6_resnet1 = ResNetBlock(32, 32)
         self.block6_attn = CrossAttentionBlock(32, text_dim)
         self.block6_resnet2 = ResNetBlock(32, 32)
         self.block6_upsample = nn.Upsample(size=(215, 215), mode='bilinear', align_corners=False)
@@ -194,103 +195,68 @@ class VAEDecoder(nn.Module):
         Decode latent vector to image with text conditioning.
         
         Args:
-            latent: Latent vector [batch_size, latent_dim, 3, 3]
+            latent: Latent vector [batch_size, latent_dim, 4, 4]
             text_emb: Text embeddings [batch_size, seq_len, text_dim]
             
         Returns:
-            Generated image [batch_size, 3, 215, 215]
+            image: Generated image [batch_size, 3, 215, 215]
         """
+        # Project latent to initial feature map
         x = self.latent_proj(latent)
         
-        # Pass through decoder blocks with cross-attention
-        # Block 1: 3x3 -> 6x6
+        # Progressive upsampling with text conditioning
+        # Block 1: 4x4 -> 7x7
         x = self.block1_resnet1(x)
         x = self.block1_attn(x, text_emb)
         x = self.block1_resnet2(x)
         x = self.block1_upsample(x)
         
-        # Block 2: 6x6 -> 13x13
+        # Block 2: 7x7 -> 14x14
         x = self.block2_resnet1(x)
         x = self.block2_attn(x, text_emb)
         x = self.block2_resnet2(x)
         x = self.block2_upsample(x)
         
-        # Block 3: 13x13 -> 26x26
+        # Block 3: 14x14 -> 27x27
         x = self.block3_resnet1(x)
         x = self.block3_attn(x, text_emb)
         x = self.block3_resnet2(x)
         x = self.block3_upsample(x)
         
-        # Block 4: 26x26 -> 53x53
+        # Block 4: 27x27 -> 54x54
         x = self.block4_resnet1(x)
         x = self.block4_attn(x, text_emb)
         x = self.block4_resnet2(x)
         x = self.block4_upsample(x)
         
-        # Block 5: 53x53 -> 107x107
+        # Block 5: 54x54 -> 108x108
         x = self.block5_resnet1(x)
         x = self.block5_attn(x, text_emb)
         x = self.block5_resnet2(x)
         x = self.block5_upsample(x)
         
-        # Block 6: 107x107 -> 215x215
+        # Block 6: 108x108 -> 215x215
         x = self.block6_resnet1(x)
         x = self.block6_attn(x, text_emb)
         x = self.block6_resnet2(x)
         x = self.block6_upsample(x)
         
-        # Final convolution
-        x = self.final_conv(x)
+        # Final output
+        image = self.final_conv(x)
         
-        return x
-
-
-# class NoiseScheduler:
-#     """Noise scheduler for diffusion-like training."""
-    
-#     def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
-#         self.num_timesteps = num_timesteps
-        
-#         # Linear schedule
-#         self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
-#         self.alphas = 1.0 - self.betas
-#         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        
-#     def add_noise(self, x_0: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
-#         """Add noise to clean latents."""
-#         # Ensure tensors are on the same device
-#         device = x_0.device
-#         if self.alphas_cumprod.device != device:
-#             self.to(device)
-            
-#         sqrt_alpha_cumprod = self.alphas_cumprod[timesteps] ** 0.5
-#         sqrt_one_minus_alpha_cumprod = (1 - self.alphas_cumprod[timesteps]) ** 0.5
-        
-#         # Reshape for broadcasting
-#         sqrt_alpha_cumprod = sqrt_alpha_cumprod.view(-1, 1, 1, 1)
-#         sqrt_one_minus_alpha_cumprod = sqrt_one_minus_alpha_cumprod.view(-1, 1, 1, 1)
-        
-#         return sqrt_alpha_cumprod * x_0 + sqrt_one_minus_alpha_cumprod * noise
-        
-#     def to(self, device):
-#         """Move scheduler to device."""
-#         self.betas = self.betas.to(device)
-#         self.alphas = self.alphas.to(device)
-#         self.alphas_cumprod = self.alphas_cumprod.to(device)
-#         return self
+        return image
 
 
 class PokemonVAE(nn.Module):
     """Complete VAE model for Pokemon sprite generation."""
     
-    def __init__(self, latent_dim: int = 512, text_dim: int = 256):
+    def __init__(self, latent_dim: int = 1024, text_dim: int = 256):
         super().__init__()
         self.latent_dim = latent_dim
         self.text_dim = text_dim
         
         self.encoder = VAEEncoder(input_channels=3, latent_dim=latent_dim)
         self.decoder = VAEDecoder(latent_dim=latent_dim, text_dim=text_dim, output_channels=3)
-        # self.noise_scheduler = NoiseScheduler()
         
     def forward(self, images: torch.Tensor, text_emb: torch.Tensor, mode: str = 'train') -> dict:
         """
@@ -299,51 +265,72 @@ class PokemonVAE(nn.Module):
         Args:
             images: Input images [batch_size, 3, 215, 215]
             text_emb: Text embeddings [batch_size, seq_len, text_dim]
-            mode: 'train' or 'inference'
+            mode: 'train', 'val', or 'generate'
             
         Returns:
             Dictionary with outputs and losses
         """
-        if mode == 'train':
-            # Encode images to latent space
-            latent, mu, logvar = self.encoder(images)
-            
-            # Add noise for diffusion-like training -- NO MORE USED
-            # noise = torch.randn_like(latent)
-            # timesteps = torch.randint(0, self.noise_scheduler.num_timesteps, (latent.size(0),), device=latent.device)
-            # noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
-            
-            # Decode with text conditioning
-            reconstructed = self.decoder(latent, text_emb)
-            
-            # Compute losses
-            recon_loss = F.mse_loss(reconstructed, images)
-            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-            
-            return {
-                'reconstructed': reconstructed,
-                'recon_loss': recon_loss,
-                'kl_loss': kl_loss,
-                'latent': latent,
-                'mu': mu,
-                'logvar': logvar
-            }
+        # Encode images to latent space
+        latent, mu, logvar = self.encoder(images)
         
-        else:  # inference
-            # Sample from prior
-            batch_size = text_emb.size(0)
-            latent = torch.randn(batch_size, self.latent_dim, 3, 3, device=text_emb.device)
-            
-            # Decode with text conditioning
-            generated = self.decoder(latent, text_emb)
-            
-            return {
-                'generated': generated,
-                'latent': latent
-            }
+        if mode == 'generate':
+            # Use only the mean for generation
+            latent = mu
+        
+        # Decode latent to images
+        reconstructed = self.decoder(latent, text_emb)
+        
+        return {
+            'reconstructed': reconstructed,
+            'latent': latent,
+            'mu': mu,
+            'logvar': logvar
+        }
     
-    # def to_device(self, device):
-    #     """Move model to device."""
-    #     super().to(device)
-    #     self.noise_scheduler.to(device)
-    #     return self
+    def encode(self, images: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encode images to latent space."""
+        return self.encoder(images)
+    
+    def decode(self, latent: torch.Tensor, text_emb: torch.Tensor) -> torch.Tensor:
+        """Decode latent vectors to images."""
+        return self.decoder(latent, text_emb)
+    
+    def sample(self, batch_size: int, text_emb: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """Sample new images from random latent vectors."""
+        # Sample random latent vectors
+        latent = torch.randn(batch_size, self.latent_dim, 4, 4, device=device)
+        
+        # Decode to images
+        return self.decoder(latent, text_emb)
+
+
+def test_vae():
+    """Test function for VAE architecture."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Create model
+    vae = PokemonVAE(latent_dim=1024, text_dim=256).to(device)
+    
+    # Create test inputs
+    batch_size = 4
+    images = torch.randn(batch_size, 3, 215, 215).to(device)
+    text_emb = torch.randn(batch_size, 32, 256).to(device)
+    
+    # Forward pass
+    with torch.no_grad():
+        outputs = vae(images, text_emb, mode='train')
+    
+    print(f"Input shape: {images.shape}")
+    print(f"Reconstructed shape: {outputs['reconstructed'].shape}")
+    print(f"Latent shape: {outputs['latent'].shape}")
+    print(f"Mu shape: {outputs['mu'].shape}")
+    print(f"Logvar shape: {outputs['logvar'].shape}")
+    print(f"Model parameters: {sum(p.numel() for p in vae.parameters()):,}")
+    
+    assert outputs['reconstructed'].shape == images.shape, "Reconstructed shape should match input"
+    assert outputs['latent'].shape == (batch_size, 1024, 4, 4), "Latent should be [batch, 1024, 4, 4]"
+    print("VAE test passed!")
+
+
+if __name__ == "__main__":
+    test_vae()

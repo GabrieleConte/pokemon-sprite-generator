@@ -46,8 +46,8 @@ class TimestepEmbedding(nn.Module):
         # Create sinusoidal embeddings
         timesteps = timesteps.float()
         emb_coeff = self.emb_coeff.to(timesteps.device)
-        emb = timesteps[:, None] * emb_coeff[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
+        emb = timesteps.unsqueeze(-1) * emb_coeff.unsqueeze(0)
+        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
         
         # Process through MLP
         time_emb = self.time_mlp(emb)
@@ -254,7 +254,7 @@ class UNet(nn.Module):
     Based on Stable Diffusion's U-Net architecture.
     """
     
-    def __init__(self, latent_dim: int = 512, text_dim: int = 256, 
+    def __init__(self, latent_dim: int = 1024, text_dim: int = 256, 
                  time_emb_dim: int = 128, num_heads: int = 8):
         super().__init__()
         self.latent_dim = latent_dim
@@ -267,29 +267,27 @@ class UNet(nn.Module):
         # Text pooling for conditioning
         self.text_pool = nn.AdaptiveAvgPool1d(1)
         
-        # Initial projection
+        # Initial projection - reduce channels from 1024 to manageable size
         self.init_conv = nn.Conv2d(latent_dim, 512, kernel_size=3, padding=1)
         
-        # Encoder blocks - simple processing at the same resolution
+        # Encoder blocks - working at 4x4 resolution
         self.encoder_blocks = nn.ModuleList([
             UNetBlock(512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
             UNetBlock(512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
             UNetBlock(512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
         ])
         
-        # No upsampling in encoder - work at 3x3 resolution
-        
         # Middle block
         self.middle_block = UNetBlock(512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads)
         
-        # Decoder blocks - simple processing with skip connections
+        # Decoder blocks with skip connections
         self.decoder_blocks = nn.ModuleList([
             UNetBlock(512 + 512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
             UNetBlock(512 + 512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
             UNetBlock(512 + 512, 512, time_emb_dim, text_dim, has_attention=True, num_heads=num_heads),
         ])
         
-        # Final projection
+        # Final projection back to latent dimension
         self.final_conv = nn.Sequential(
             nn.GroupNorm(32, 512),
             nn.SiLU(),
@@ -348,11 +346,11 @@ def test_unet():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Create model
-    unet = UNet(latent_dim=512, text_dim=256).to(device)
+    unet = UNet(latent_dim=1024, text_dim=256).to(device)
     
     # Create test inputs
     batch_size = 4
-    noisy_latent = torch.randn(batch_size, 512, 3, 3).to(device)
+    noisy_latent = torch.randn(batch_size, 1024, 4, 4).to(device)
     timesteps = torch.randint(0, 1000, (batch_size,)).to(device)
     text_emb = torch.randn(batch_size, 32, 256).to(device)
     
