@@ -367,9 +367,8 @@ class VAETrainer:
             recon_outputs = self.vae(real_images.to(self.device), text_emb, mode='train')
             reconstructed = recon_outputs['reconstructed']
             
-            # Generate from prior
-            gen_outputs = self.vae(None, text_emb, mode='inference')
-            generated = gen_outputs['generated']
+            # Generate from prior using sample method
+            generated = self.vae.sample(num_samples, text_emb, self.device)
         
         # Convert to numpy and denormalize
         real_images = self.denormalize_images(real_images)

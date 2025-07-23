@@ -32,7 +32,7 @@ data:
 # Training configuration
 training:
   # Stage-specific epochs (optimized for practical training)
-  vae_epochs: 50      # VAE foundation training
+  vae_epochs: 500     # VAE foundation training
   diffusion_epochs: 40  # U-Net training  
   final_epochs: 60    # Final joint training
   
@@ -47,7 +47,7 @@ training:
   clip_weight: 0.3    # Increased for better text-image alignment
   
   # Training phases for final stage
-  phase1_epochs: 30   # Text encoder fine-tuning
+  phase1_epochs: 1   # Text encoder fine-tuning
   
   # Logging and checkpoints
   log_every: 25       # More frequent logging
@@ -57,12 +57,12 @@ training:
 # Optimization
 optimization:
   optimizer: "adamw"
-  learning_rate: 1e-4      # Conservative learning rate
-  text_encoder_lr: 5e-5    # Lower for fine-tuning
-  vae_decoder_lr: 5e-5     # Lower for fine-tuning
-  beta1: 0.9               # Standard Adam betas
+  learning_rate: 0.0001      # Conservative learning rate
+  text_encoder_lr: 0.00005   # Lower for fine-tuning
+  vae_decoder_lr: 0.00005    # Lower for fine-tuning
+  beta1: 0.9                 # Standard Adam betas
   beta2: 0.999
-  weight_decay: 1e-4       # Regularization
+  weight_decay: 0.0001       # Regularization
   scheduler: "cosine"
 
 # Device

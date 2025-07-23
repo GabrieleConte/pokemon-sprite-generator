@@ -263,19 +263,25 @@ class PokemonVAE(nn.Module):
         Forward pass of the VAE.
         
         Args:
-            images: Input images [batch_size, 3, 215, 215]
+            images: Input images [batch_size, 3, 215, 215] or None for pure generation
             text_emb: Text embeddings [batch_size, seq_len, text_dim]
-            mode: 'train', 'val', or 'generate'
+            mode: 'train', 'val', 'generate', or 'sample'
             
         Returns:
             Dictionary with outputs and losses
         """
-        # Encode images to latent space
-        latent, mu, logvar = self.encoder(images)
-        
-        if mode == 'generate':
-            # Use only the mean for generation
-            latent = mu
+        if mode == 'sample' or images is None:
+            # Generate from random latent vectors (pure sampling)
+            batch_size = text_emb.size(0)
+            latent = torch.randn(batch_size, self.latent_dim, 4, 4, device=text_emb.device)
+            mu = logvar = None  # No encoding step
+        else:
+            # Encode images to latent space
+            latent, mu, logvar = self.encoder(images)
+            
+            if mode == 'generate':
+                # Use only the mean for generation
+                latent = mu
         
         # Decode latent to images
         reconstructed = self.decoder(latent, text_emb)

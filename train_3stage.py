@@ -69,7 +69,7 @@ def main():
         return
     
     # Create experiment directory
-    experiment_dir = Path(config['experiment_dir']) / args.experiment_name
+    experiment_dir = Path(config['experiment_dir'])
     experiment_dir.mkdir(parents=True, exist_ok=True)
     
     # Stage 1: VAE Training
