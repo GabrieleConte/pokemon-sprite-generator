@@ -68,44 +68,35 @@ class CrossAttentionBlock(nn.Module):
 class VAEEncoder(nn.Module):
     """VAE encoder that encodes Pokemon images to latent space with gradual downsampling."""
     
-    def __init__(self, input_channels: int = 3, latent_dim: int = 1024):
+    def __init__(self, input_channels: int = 3, latent_dim: int = 8):
         super().__init__()
         self.latent_dim = latent_dim
         
-        # More gradual encoder network: 215x215 -> 4x4
+        # More gradual encoder network: 215x215 -> 27x27 (8x downsampling)
         self.encoder = nn.Sequential(
-            # 215x215 -> 107x107
+            # Block 1: 215x215 -> 108x108 (with proper padding)
             nn.Conv2d(input_channels, 32, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(32, 32),
             
-            # 107x107 -> 53x53
+            # Block 2: 108x108 -> 54x54
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
             nn.ReLU(),
             ResNetBlock(64, 64),
             
-            # 53x53 -> 26x26
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
+            # Block 3: 54x54 -> 27x27 (target resolution with adjusted padding)
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=2),
             nn.ReLU(),
             ResNetBlock(128, 128),
             
-            # 26x26 -> 13x13
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            # Additional processing blocks at 27x27 for better feature extraction
+            ResNetBlock(128, 256),
             ResNetBlock(256, 256),
-            
-            # 13x13 -> 6x6
-            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            ResNetBlock(512, 512),
-            
-            # 6x6 -> 4x4
-            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
-            nn.ReLU(),
+            ResNetBlock(256, 512),
             ResNetBlock(512, 512),
         )
         
-        # Latent space projections for 4x4 output
+        # Latent space projections for 27x27 output
         self.mu_proj = nn.Conv2d(512, latent_dim, kernel_size=3, padding=1)
         self.logvar_proj = nn.Conv2d(512, latent_dim, kernel_size=3, padding=1)
         
@@ -117,9 +108,9 @@ class VAEEncoder(nn.Module):
             x: Input image [batch_size, 3, 215, 215]
             
         Returns:
-            latent: Sampled latent vector [batch_size, latent_dim, 4, 4]
-            mu: Mean of latent distribution [batch_size, latent_dim, 4, 4]
-            logvar: Log variance of latent distribution [batch_size, latent_dim, 4, 4]
+            latent: Sampled latent vector [batch_size, latent_dim, 27, 27]
+            mu: Mean of latent distribution [batch_size, latent_dim, 27, 27]
+            logvar: Log variance of latent distribution [batch_size, latent_dim, 27, 27]
         """
         encoded = self.encoder(x)
         
@@ -137,50 +128,42 @@ class VAEEncoder(nn.Module):
 class VAEDecoder(nn.Module):
     """VAE decoder that generates Pokemon images from latent space with text conditioning and gradual upsampling."""
     
-    def __init__(self, latent_dim: int = 1024, text_dim: int = 256, output_channels: int = 3):
+    def __init__(self, latent_dim: int = 8, text_dim: int = 256, output_channels: int = 3):
         super().__init__()
         self.latent_dim = latent_dim
         self.text_dim = text_dim
         
-        # Initial latent processing - reduce to manageable channels
+        # Initial latent processing - expand to manageable channels
         self.latent_proj = nn.Conv2d(latent_dim, 512, kernel_size=3, padding=1)
         
-        # Gradual decoder blocks with cross-attention: 4x4 -> 215x215
-        # Block 1: 4x4 -> 7x7
+        # Gradual decoder blocks with cross-attention: 27x27 -> 215x215
+        # Block 1: 27x27 -> 27x27 (processing)
         self.block1_resnet1 = ResNetBlock(512, 512)
         self.block1_attn = CrossAttentionBlock(512, text_dim)
         self.block1_resnet2 = ResNetBlock(512, 512)
-        self.block1_upsample = nn.Upsample(size=(7, 7), mode='bilinear', align_corners=False)
         
-        # Block 2: 7x7 -> 14x14
+        # Block 2: 27x27 -> 54x54
         self.block2_resnet1 = ResNetBlock(512, 256)
         self.block2_attn = CrossAttentionBlock(256, text_dim)
         self.block2_resnet2 = ResNetBlock(256, 256)
         self.block2_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        # Block 3: 14x14 -> 27x27
+        # Block 3: 54x54 -> 108x108
         self.block3_resnet1 = ResNetBlock(256, 128)
         self.block3_attn = CrossAttentionBlock(128, text_dim)
         self.block3_resnet2 = ResNetBlock(128, 128)
-        self.block3_upsample = nn.Upsample(size=(27, 27), mode='bilinear', align_corners=False)
+        self.block3_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        # Block 4: 27x27 -> 54x54
+        # Block 4: 108x108 -> 215x215
         self.block4_resnet1 = ResNetBlock(128, 64)
         self.block4_attn = CrossAttentionBlock(64, text_dim)
         self.block4_resnet2 = ResNetBlock(64, 64)
-        self.block4_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.block4_upsample = nn.Upsample(size=(215, 215), mode='bilinear', align_corners=False)
         
-        # Block 5: 54x54 -> 108x108
+        # Block 5: 215x215 -> 215x215 (final processing)
         self.block5_resnet1 = ResNetBlock(64, 32)
         self.block5_attn = CrossAttentionBlock(32, text_dim)
         self.block5_resnet2 = ResNetBlock(32, 32)
-        self.block5_upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        
-        # Block 6: 108x108 -> 215x215
-        self.block6_resnet1 = ResNetBlock(32, 32)
-        self.block6_attn = CrossAttentionBlock(32, text_dim)
-        self.block6_resnet2 = ResNetBlock(32, 32)
-        self.block6_upsample = nn.Upsample(size=(215, 215), mode='bilinear', align_corners=False)
         
         # Final output layer
         self.final_conv = nn.Sequential(
@@ -195,7 +178,7 @@ class VAEDecoder(nn.Module):
         Decode latent vector to image with text conditioning.
         
         Args:
-            latent: Latent vector [batch_size, latent_dim, 4, 4]
+            latent: Latent vector [batch_size, latent_dim, 27, 27]
             text_emb: Text embeddings [batch_size, seq_len, text_dim]
             
         Returns:
@@ -205,41 +188,33 @@ class VAEDecoder(nn.Module):
         x = self.latent_proj(latent)
         
         # Progressive upsampling with text conditioning
-        # Block 1: 4x4 -> 7x7
+        # Block 1: 27x27 -> 27x27 (processing)
         x = self.block1_resnet1(x)
         x = self.block1_attn(x, text_emb)
         x = self.block1_resnet2(x)
-        x = self.block1_upsample(x)
         
-        # Block 2: 7x7 -> 14x14
+        # Block 2: 27x27 -> 54x54
         x = self.block2_resnet1(x)
         x = self.block2_attn(x, text_emb)
         x = self.block2_resnet2(x)
         x = self.block2_upsample(x)
         
-        # Block 3: 14x14 -> 27x27
+        # Block 3: 54x54 -> 108x108
         x = self.block3_resnet1(x)
         x = self.block3_attn(x, text_emb)
         x = self.block3_resnet2(x)
         x = self.block3_upsample(x)
         
-        # Block 4: 27x27 -> 54x54
+        # Block 4: 108x108 -> 215x215
         x = self.block4_resnet1(x)
         x = self.block4_attn(x, text_emb)
         x = self.block4_resnet2(x)
         x = self.block4_upsample(x)
         
-        # Block 5: 54x54 -> 108x108
+        # Block 5: 215x215 -> 215x215 (final processing)
         x = self.block5_resnet1(x)
         x = self.block5_attn(x, text_emb)
         x = self.block5_resnet2(x)
-        x = self.block5_upsample(x)
-        
-        # Block 6: 108x108 -> 215x215
-        x = self.block6_resnet1(x)
-        x = self.block6_attn(x, text_emb)
-        x = self.block6_resnet2(x)
-        x = self.block6_upsample(x)
         
         # Final output
         image = self.final_conv(x)
@@ -250,7 +225,7 @@ class VAEDecoder(nn.Module):
 class PokemonVAE(nn.Module):
     """Complete VAE model for Pokemon sprite generation."""
     
-    def __init__(self, latent_dim: int = 1024, text_dim: int = 256):
+    def __init__(self, latent_dim: int = 8, text_dim: int = 256):
         super().__init__()
         self.latent_dim = latent_dim
         self.text_dim = text_dim
@@ -273,7 +248,7 @@ class PokemonVAE(nn.Module):
         if mode == 'sample' or images is None:
             # Generate from random latent vectors (pure sampling)
             batch_size = text_emb.size(0)
-            latent = torch.randn(batch_size, self.latent_dim, 4, 4, device=text_emb.device)
+            latent = torch.randn(batch_size, self.latent_dim, 27, 27, device=text_emb.device)
             mu = logvar = None  # No encoding step
         else:
             # Encode images to latent space
@@ -304,7 +279,7 @@ class PokemonVAE(nn.Module):
     def sample(self, batch_size: int, text_emb: torch.Tensor, device: torch.device) -> torch.Tensor:
         """Sample new images from random latent vectors."""
         # Sample random latent vectors
-        latent = torch.randn(batch_size, self.latent_dim, 4, 4, device=device)
+        latent = torch.randn(batch_size, self.latent_dim, 27, 27, device=device)
         
         # Decode to images
         return self.decoder(latent, text_emb)
@@ -315,7 +290,7 @@ def test_vae():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Create model
-    vae = PokemonVAE(latent_dim=1024, text_dim=256).to(device)
+    vae = PokemonVAE(latent_dim=8, text_dim=256).to(device)
     
     # Create test inputs
     batch_size = 4
@@ -334,7 +309,7 @@ def test_vae():
     print(f"Model parameters: {sum(p.numel() for p in vae.parameters()):,}")
     
     assert outputs['reconstructed'].shape == images.shape, "Reconstructed shape should match input"
-    assert outputs['latent'].shape == (batch_size, 1024, 4, 4), "Latent should be [batch, 1024, 4, 4]"
+    assert outputs['latent'].shape == (batch_size, 8, 27, 27), "Latent should be [batch, 8, 27, 27]"
     print("VAE test passed!")
 
 

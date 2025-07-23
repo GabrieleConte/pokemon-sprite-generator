@@ -396,7 +396,7 @@ def get_dataset_statistics(csv_path: str, image_dir: str, background_color: Unio
 
 if __name__ == "__main__":
     # Test the dataset
-    csv_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/pokemon.csv"
+    csv_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
     image_dir = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
     
     # Test different background colors
@@ -406,10 +406,10 @@ if __name__ == "__main__":
         print(f"{'='*50}")
         
         # Get dataset statistics
-        stats = get_dataset_statistics(csv_path, image_dir, background_color=bg_color)
-        print("Dataset Statistics:")
-        for key, value in stats.items():
-            print(f"  {key}: {value}")
+        # stats = get_dataset_statistics(csv_path, image_dir, background_color=bg_color)
+        # print("Dataset Statistics:")
+        # for key, value in stats.items():
+        #     print(f"  {key}: {value}")
         
         # Create data loaders
         train_loader, val_loader, test_loader = create_data_loaders(
@@ -422,6 +422,7 @@ if __name__ == "__main__":
         print(f"  Images: {batch['image'].shape}")
         print(f"  Descriptions: {len(batch['description'])}")
         print(f"  Sample description: {batch['description'][0]}")
+        print(f" Full description: {batch['full_description'][0]}")
         
         # Check image statistics
         images = batch['image']

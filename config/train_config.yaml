@@ -7,7 +7,7 @@ experiment_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experim
 model:
   bert_model: "prajjwal1/bert-mini"
   text_embedding_dim: 256
-  latent_dim: 1024  # 1024 channels for 4x4 latent space
+  latent_dim: 8  # 8 channels for 27x27 latent space
   
   # U-Net parameters
   time_emb_dim: 128
@@ -32,8 +32,8 @@ data:
 # Training configuration
 training:
   # Stage-specific epochs (optimized for practical training)
-  vae_epochs: 500     # VAE foundation training
-  diffusion_epochs: 40  # U-Net training  
+  vae_epochs: 50     # VAE foundation training
+  diffusion_epochs: 80  # U-Net training  
   final_epochs: 60    # Final joint training
   
   # KL annealing for VAE (prevents posterior collapse)
@@ -47,7 +47,7 @@ training:
   clip_weight: 0.3    # Increased for better text-image alignment
   
   # Training phases for final stage
-  phase1_epochs: 1   # Text encoder fine-tuning
+  phase1_epochs: 30   # Text encoder fine-tuning
   
   # Logging and checkpoints
   log_every: 25       # More frequent logging
@@ -64,6 +64,7 @@ optimization:
   beta2: 0.999
   weight_decay: 0.0001       # Regularization
   scheduler: "cosine"
+  max_grad_norm: 1.0         # Gradient clipping for stability
 
 # Device
 device: "mps"

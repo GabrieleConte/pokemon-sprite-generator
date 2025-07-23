@@ -96,12 +96,12 @@ class FinalPokemonGenerator(nn.Module):
         # VAE Encoder (frozen)
         self.vae_encoder = VAEEncoder(
             input_channels=3,
-            latent_dim=text_encoder_config.get('latent_dim', 1024)
+            latent_dim=text_encoder_config.get('latent_dim', 8)  # Fixed: should be 8, not 1024
         )
         
         # VAE Decoder (frozen initially, will be unfrozen for fine-tuning)
         self.vae_decoder = VAEDecoder(
-            latent_dim=text_encoder_config.get('latent_dim', 512),
+            latent_dim=text_encoder_config.get('latent_dim', 8),  # Fixed: should be 8, not 512
             text_dim=text_encoder_config['text_embedding_dim'],
             output_channels=3
         )
@@ -130,7 +130,7 @@ class FinalPokemonGenerator(nn.Module):
         diffusion_checkpoint = torch.load(diffusion_path, map_location='cpu')
         
         self.unet = UNet(
-            latent_dim=text_encoder_config.get('latent_dim', 512),
+            latent_dim=text_encoder_config.get('latent_dim', 8),  # Fixed: should be 8, not 512
             text_dim=text_encoder_config['text_embedding_dim'],
             time_emb_dim=text_encoder_config.get('time_emb_dim', 128),
             num_heads=text_encoder_config.get('num_heads', 8)
@@ -160,15 +160,16 @@ class FinalPokemonGenerator(nn.Module):
         )
         
         # Latent dimension
-        self.latent_dim = text_encoder_config.get('latent_dim', 512)
+        self.latent_dim = text_encoder_config.get('latent_dim', 8)  # Fixed: should be 8, not 512
         
-    def forward(self, text_list: List[str], num_inference_steps: int = 50) -> torch.Tensor:
+    def forward(self, text_list: List[str], num_inference_steps: int = 50, mode: str = 'generate') -> torch.Tensor:
         """
         Generate Pokemon images from text descriptions using diffusion.
         
         Args:
             text_list: List of text descriptions
             num_inference_steps: Number of diffusion steps for sampling
+            mode: 'generate' for pure generation, 'reconstruct' for image reconstruction
             
         Returns:
             Generated images [batch_size, 3, 215, 215]
@@ -176,35 +177,63 @@ class FinalPokemonGenerator(nn.Module):
         # Encode text
         text_emb = self.text_encoder(text_list)
         
-        # Start from pure noise in latent space
-        batch_size = text_emb.size(0)
-        latent = torch.randn(batch_size, self.latent_dim, 3, 3, device=text_emb.device)
+        if mode == 'generate':
+            # Start from pure noise in latent space
+            batch_size = text_emb.size(0)
+            latent = torch.randn(batch_size, self.latent_dim, 27, 27, device=text_emb.device)  # Fixed: 27x27, not 3x3
+            
+            # Diffusion sampling
+            step_size = max(1, self.noise_scheduler.num_timesteps // num_inference_steps)
+            
+            for i in range(num_inference_steps):
+                timestep = self.noise_scheduler.num_timesteps - 1 - i * step_size
+                timestep = max(0, timestep)
+                
+                # Create timestep tensor
+                timesteps = torch.full((batch_size,), timestep, device=text_emb.device, dtype=torch.long)
+                
+                # Predict noise with U-Net
+                with torch.no_grad():
+                    predicted_noise = self.unet(latent, timesteps, text_emb)
+                
+                # Sample previous timestep
+                if timestep > 0:
+                    latent = self.noise_scheduler.sample_previous_timestep(latent, predicted_noise, timestep)
+                else:
+                    # Final step - just remove predicted noise
+                    latent = latent - predicted_noise
         
-        # Diffusion sampling
-        step_size = self.noise_scheduler.num_timesteps // num_inference_steps
-        
-        for i in range(num_inference_steps):
-            timestep = self.noise_scheduler.num_timesteps - 1 - i * step_size
-            timestep = max(0, timestep)
-            
-            # Create timestep tensor
-            timesteps = torch.full((batch_size,), timestep, device=text_emb.device, dtype=torch.long)
-            
-            # Predict noise with U-Net
-            with torch.no_grad():
-                predicted_noise = self.unet(latent, timesteps, text_emb)
-            
-            # Sample previous timestep
-            if timestep > 0:
-                latent = self.noise_scheduler.sample_previous_timestep(latent, predicted_noise, timestep)
-            else:
-                # Final step - just remove predicted noise
-                latent = latent - predicted_noise
+        else:  # reconstruct mode - use VAE encoder
+            # This would be used if we had input images to reconstruct
+            raise NotImplementedError("Reconstruction mode requires input images")
         
         # Decode latent to image using VAE decoder
         generated = self.vae_decoder(latent, text_emb)
         
         return generated
+    
+    def encode_and_decode(self, images: torch.Tensor, text_list: List[str]) -> torch.Tensor:
+        """
+        Encode images to latent space and decode back (for training).
+        
+        Args:
+            images: Input images [batch_size, 3, 215, 215]
+            text_list: List of text descriptions
+            
+        Returns:
+            Reconstructed images [batch_size, 3, 215, 215]
+        """
+        # Encode text
+        text_emb = self.text_encoder(text_list)
+        
+        # Encode images to latent space
+        with torch.no_grad():
+            latent, _, _ = self.vae_encoder(images)
+        
+        # Decode latent to image using VAE decoder
+        reconstructed = self.vae_decoder(latent, text_emb)
+        
+        return reconstructed
     
     def unfreeze_vae_decoder(self):
         """Unfreeze VAE decoder for fine-tuning."""
@@ -430,14 +459,14 @@ class FinalTrainer:
             images = batch['image'].to(self.device)
             descriptions = batch['full_description']
             
-            # Forward pass
-            generated_images = self.generator(descriptions)
+            # Forward pass - use encode_and_decode for training (reconstruction)
+            reconstructed_images = self.generator.encode_and_decode(images, descriptions)
             
             # Compute generation loss
-            gen_loss, gen_loss_dict = self.compute_generation_loss(generated_images, images)
+            gen_loss, gen_loss_dict = self.compute_generation_loss(reconstructed_images, images)
             
             # Compute CLIP alignment loss
-            clip_loss = self.clip_loss(generated_images, descriptions)
+            clip_loss = self.clip_loss(reconstructed_images, descriptions)
             
             # Combined loss
             clip_weight = self.config['training'].get('clip_weight', 0.1)
@@ -498,11 +527,11 @@ class FinalTrainer:
                 images = batch['image'].to(self.device)
                 descriptions = batch['full_description']
                 
-                # Forward pass
-                generated_images = self.generator(descriptions)
+                # Forward pass - use encode_and_decode for validation
+                reconstructed_images = self.generator.encode_and_decode(images, descriptions)
                 
                 # Compute loss
-                loss, loss_dict = self.compute_generation_loss(generated_images, images)
+                loss, loss_dict = self.compute_generation_loss(reconstructed_images, images)
                 
                 # Update metrics
                 total_loss += loss_dict['total_loss']

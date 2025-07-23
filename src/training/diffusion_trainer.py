@@ -141,11 +141,11 @@ class DiffusionTrainer:
         # VAE Encoder and Decoder (frozen during diffusion training)
         self.vae_encoder = VAEEncoder(
             input_channels=3,
-            latent_dim=model_config.get('latent_dim', 1024)
+            latent_dim=model_config.get('latent_dim', 8)
         ).to(self.device)
         
         self.vae_decoder = VAEDecoder(
-            latent_dim=model_config.get('latent_dim', 1024),
+            latent_dim=model_config.get('latent_dim', 8),
             text_dim=model_config['text_embedding_dim'],
             output_channels=3
         ).to(self.device)
@@ -180,7 +180,7 @@ class DiffusionTrainer:
         
         # U-Net for diffusion denoising
         self.unet = UNet(
-            latent_dim=model_config.get('latent_dim', 1024),
+            latent_dim=model_config.get('latent_dim', 8),
             text_dim=model_config['text_embedding_dim'],
             time_emb_dim=model_config.get('time_emb_dim', 128),
             num_heads=model_config.get('num_heads', 8)
@@ -275,7 +275,7 @@ class DiffusionTrainer:
         
         for batch_idx, batch in enumerate(pbar):
             images = batch['image'].to(self.device)
-            descriptions = batch['description']
+            descriptions = batch['full_description']
             
             # Encode text
             with torch.no_grad():
@@ -306,8 +306,9 @@ class DiffusionTrainer:
             # Backward pass
             loss.backward()
             
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.unet.parameters(), max_norm=1.0)
+            # Gradient clipping to prevent exploding gradients
+            max_grad_norm = self.config['optimization'].get('max_grad_norm', 1.0)
+            torch.nn.utils.clip_grad_norm_(self.unet.parameters(), max_norm=max_grad_norm)
             
             self.optimizer.step()
             
@@ -340,7 +341,7 @@ class DiffusionTrainer:
         with torch.no_grad():
             for batch in tqdm(self.data_loaders['val'], desc="Validation"):
                 images = batch['image'].to(self.device)
-                descriptions = batch['description']
+                descriptions = batch['full_description']
                 
                 # Encode text
                 text_emb = self.text_encoder(descriptions)
@@ -375,49 +376,114 @@ class DiffusionTrainer:
         
         return {'val_loss': avg_loss}
     
+    def ddpm_sample(self, text_emb: torch.Tensor, num_samples: int, fast_sampling: bool = True) -> torch.Tensor:
+        """
+        Generate samples using DDPM sampling process.
+        
+        Args:
+            text_emb: Text embeddings [batch_size, seq_len, text_dim]
+            num_samples: Number of samples to generate
+            fast_sampling: If True, use fewer denoising steps for faster generation during training
+            
+        Returns:
+            Generated latent vectors [batch_size, latent_dim, 27, 27]
+        """
+        # Start from pure noise
+        latent_shape = (num_samples, self.config['model'].get('latent_dim', 8), 27, 27)
+        x_t = torch.randn(latent_shape, device=self.device)
+        
+        # Ensure noise scheduler is on correct device
+        self.noise_scheduler.to(self.device)
+        
+        # Use fewer steps during training for speed
+        if fast_sampling:
+            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))  # Every 50th step
+        else:
+            timesteps_to_use = list(range(self.noise_scheduler.num_timesteps))
+        
+        # Reverse diffusion process
+        for t in reversed(timesteps_to_use):
+            # Create timestep tensor
+            timesteps = torch.full((num_samples,), t, device=self.device, dtype=torch.long)
+            
+            # Predict noise
+            with torch.no_grad():
+                predicted_noise = self.unet(x_t, timesteps, text_emb)
+            
+            # Get coefficients
+            alpha_t = self.noise_scheduler.alphas[t]
+            alpha_cumprod_t = self.noise_scheduler.alphas_cumprod[t]
+            beta_t = self.noise_scheduler.betas[t]
+            
+            # Compute mean of q(x_{t-1} | x_t, x_0)
+            if t > 0:
+                alpha_cumprod_t_prev = self.noise_scheduler.alphas_cumprod[t-1]
+            else:
+                alpha_cumprod_t_prev = torch.tensor(1.0, device=self.device)
+            
+            # DDPM formula
+            coeff1 = 1.0 / torch.sqrt(alpha_t)
+            coeff2 = beta_t / torch.sqrt(1 - alpha_cumprod_t)
+            
+            x_t = coeff1 * (x_t - coeff2 * predicted_noise)
+            
+            # Add noise (except for last step)
+            if t > 0 and not fast_sampling:  # Skip noise in fast sampling except for larger steps
+                noise = torch.randn_like(x_t)
+                sigma_t = torch.sqrt(beta_t)
+                x_t = x_t + sigma_t * noise
+            elif t > 0 and fast_sampling and t % 50 == 0:  # Add noise only at larger intervals
+                noise = torch.randn_like(x_t)
+                sigma_t = torch.sqrt(beta_t)
+                x_t = x_t + sigma_t * noise
+        
+        return x_t
+
     def generate_samples(self, epoch: int, num_samples: int = 8):
-        """Generate sample images for monitoring."""
+        """Generate sample images for monitoring using proper DDPM sampling."""
         self.unet.eval()
         self.vae_decoder.eval()
         self.text_encoder.eval()
         
         # Sample descriptions from validation set
         val_batch = next(iter(self.data_loaders['val']))
-        sample_descriptions = val_batch['description'][:num_samples]
+        sample_descriptions = val_batch['full_description'][:num_samples]
         
         with torch.no_grad():
             # Encode text
             text_emb = self.text_encoder(sample_descriptions)
             
-            # Start from pure noise
-            latent_shape = (num_samples, self.config['model'].get('latent_dim', 1024), 4, 4)
-            latent = torch.randn(latent_shape, device=self.device)
+            # Generate in smaller batches to avoid memory issues
+            batch_size = min(4, num_samples)  # Generate max 4 at a time
+            all_generated_images = []
             
-            # Simple denoising (in practice, you'd use DDPM sampling)
-            for t in reversed(range(0, self.noise_scheduler.num_timesteps, 50)):
-                timesteps = torch.full((num_samples,), t, device=self.device)
-                predicted_noise = self.unet(latent, timesteps, text_emb)
+            for i in range(0, num_samples, batch_size):
+                batch_end = min(i + batch_size, num_samples)
+                batch_text_emb = text_emb[i:batch_end]
+                batch_descriptions = sample_descriptions[i:batch_end]
                 
-                # Simple denoising step (not full DDPM)
-                alpha = self.noise_scheduler.alphas[t]
-                alpha_cumprod = self.noise_scheduler.alphas_cumprod[t]
+                # Generate latent vectors using DDPM sampling
+                generated_latents = self.ddpm_sample(batch_text_emb, batch_end - i)
                 
-                latent = (latent - (1 - alpha) / torch.sqrt(1 - alpha_cumprod) * predicted_noise) / torch.sqrt(alpha)
-            
-            # Decode to images
-            generated_images = self.vae_decoder(latent, text_emb)
-            
-            # Denormalize and save
-            generated_images = (generated_images + 1.0) / 2.0
-            generated_images = torch.clamp(generated_images, 0, 1)
-            
-            # Save samples
-            for i, (img, desc) in enumerate(zip(generated_images, sample_descriptions)):
-                img_pil = transforms.ToPILImage()(img.cpu())
-                img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{i}.png")
+                # Decode to images
+                generated_images = self.vae_decoder(generated_latents, batch_text_emb)
                 
-                # Log to TensorBoard
-                self.writer.add_image(f'Diffusion Generated/Sample_{i}', img.cpu(), epoch)
+                # Denormalize and clamp
+                generated_images = (generated_images + 1.0) / 2.0
+                generated_images = torch.clamp(generated_images, 0, 1)
+                
+                all_generated_images.append(generated_images)
+                
+                # Save individual samples
+                for j, (img, desc) in enumerate(zip(generated_images, batch_descriptions)):
+                    sample_idx = i + j
+                    img_pil = transforms.ToPILImage()(img.cpu())
+                    img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{sample_idx}.png")
+                    
+                    # Log to TensorBoard
+                    self.writer.add_image(f'Diffusion Generated/Sample_{sample_idx}', img.cpu(), epoch)
+                
+        self.logger.info(f"Generated {num_samples} samples for epoch {epoch}")
                 
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
