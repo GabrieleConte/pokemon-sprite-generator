@@ -499,8 +499,8 @@ class DiffusionTrainer:
         }
         
         # Save regular checkpoint
-        checkpoint_path = self.checkpoint_dir / f"diffusion_epoch_{epoch}.pth"
-        torch.save(checkpoint, checkpoint_path)
+        # checkpoint_path = self.checkpoint_dir / f"diffusion_epoch_{epoch}.pth"
+        # torch.save(checkpoint, checkpoint_path)
         
         # Save best checkpoint
         if is_best:
@@ -508,13 +508,13 @@ class DiffusionTrainer:
             torch.save(checkpoint, best_path)
             self.logger.info(f"New best model saved at epoch {epoch}")
             
-        checkpoints = list(self.checkpoint_dir.glob('diffusion_epoch_*.pth'))
-        if len(checkpoints) > 2:
-            checkpoints.sort()
-            for old_checkpoint in checkpoints[:-2]:
-                old_checkpoint.unlink()
+        # checkpoints = list(self.checkpoint_dir.glob('diffusion_epoch_*.pth'))
+        # if len(checkpoints) > 2:
+        #     checkpoints.sort()
+        #     for old_checkpoint in checkpoints[:-2]:
+        #         old_checkpoint.unlink()
         
-        self.logger.info(f"Checkpoint saved: {checkpoint_path}")
+        # self.logger.info(f"Checkpoint saved: {checkpoint_path}")
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load training checkpoint."""

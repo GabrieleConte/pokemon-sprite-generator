@@ -654,20 +654,20 @@ class FinalTrainer:
             'training_phase': self.training_phase
         }
         
-        # Save regular checkpoint
-        torch.save(checkpoint, self.checkpoint_dir / f'final_checkpoint_epoch_{epoch:04d}.pth')
+        # # Save regular checkpoint
+        # torch.save(checkpoint, self.checkpoint_dir / f'final_checkpoint_epoch_{epoch:04d}.pth')
         
         # Save best model
         if is_best:
             torch.save(checkpoint, self.checkpoint_dir / 'final_best_model.pth')
             self.logger.info(f'Saved best model at epoch {epoch}')
         
-        # Keep only recent checkpoints
-        checkpoints = list(self.checkpoint_dir.glob('final_checkpoint_epoch_*.pth'))
-        if len(checkpoints) > 2:
-            checkpoints.sort()
-            for old_checkpoint in checkpoints[:-2]:
-                old_checkpoint.unlink()
+        # # Keep only recent checkpoints
+        # checkpoints = list(self.checkpoint_dir.glob('final_checkpoint_epoch_*.pth'))
+        # if len(checkpoints) > 2:
+        #     checkpoints.sort()
+        #     for old_checkpoint in checkpoints[:-2]:
+        #         old_checkpoint.unlink()
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load model checkpoint."""

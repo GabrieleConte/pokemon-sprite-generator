@@ -416,8 +416,8 @@ class VAETrainer:
             'best_val_loss': self.best_val_loss
         }
         
-        # Save regular checkpoint
-        torch.save(checkpoint, self.checkpoint_dir / f'vae_checkpoint_epoch_{epoch:04d}.pth')
+        # # Save regular checkpoint
+        # torch.save(checkpoint, self.checkpoint_dir / f'vae_checkpoint_epoch_{epoch:04d}.pth')
         
         # Save best model
         if is_best:
@@ -425,11 +425,11 @@ class VAETrainer:
             self.logger.info(f'Saved best model at epoch {epoch}')
         
         # Keep only recent checkpoints
-        checkpoints = list(self.checkpoint_dir.glob('vae_checkpoint_epoch_*.pth'))
-        if len(checkpoints) > 2:
-            checkpoints.sort()
-            for old_checkpoint in checkpoints[:-2]:
-                old_checkpoint.unlink()
+        # checkpoints = list(self.checkpoint_dir.glob('vae_checkpoint_epoch_*.pth'))
+        # if len(checkpoints) > 2:
+        #     checkpoints.sort()
+        #     for old_checkpoint in checkpoints[:-2]:
+        #         old_checkpoint.unlink()
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load model checkpoint."""
