@@ -3,7 +3,8 @@ Training utilities for Pokemon Sprite Generator.
 """
 
 from .vae_trainer import VAETrainer
-from .diffusion_trainer import DiffusionTrainer
+# from .diffusion_trainer import DiffusionTrainer
+from .improved_diffusion_trainer import ImprovedDiffusionTrainer as DiffusionTrainer
 from .final_trainer import FinalTrainer
 
 __all__ = [

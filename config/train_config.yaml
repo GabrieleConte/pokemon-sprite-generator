@@ -22,7 +22,7 @@ model:
 data:
   csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
   image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
-  batch_size: 8  # Reduced for better GPU memory usage
+  batch_size: 4  # Reduced for stability
   image_size: 215
   num_workers: 4  # Reduced for stability
   pin_memory: true
@@ -32,9 +32,9 @@ data:
 # Training configuration
 training:
   # Stage-specific epochs (optimized for practical training)
-  vae_epochs: 50     # VAE foundation training
-  diffusion_epochs: 80  # U-Net training  
-  final_epochs: 60    # Final joint training
+  vae_epochs: 80     # VAE foundation training
+  diffusion_epochs: 500  # U-Net training - increased for ultra-stable config
+  final_epochs: 80    # Final joint training
   
   # KL annealing for VAE (prevents posterior collapse)
   kl_anneal_start: 0
@@ -47,7 +47,7 @@ training:
   clip_weight: 0.3    # Increased for better text-image alignment
   
   # Training phases for final stage
-  phase1_epochs: 30   # Text encoder fine-tuning
+  phase1_epochs: 50   # Text encoder fine-tuning
   
   # Logging and checkpoints
   log_every: 25       # More frequent logging
@@ -65,6 +65,18 @@ optimization:
   weight_decay: 0.0001       # Regularization
   scheduler: "cosine"
   max_grad_norm: 1.0         # Gradient clipping for stability
+
+# U-Net specific optimization (ultra-stable settings for diffusion training)
+unet_optimization:
+  optimizer: "adamw"          # Ultra-stable AdamW optimizer
+  learning_rate: 0.0001       # Conservative learning rate for stability
+  beta1: 0.9                  # Standard Adam betas
+  beta2: 0.999
+  weight_decay: 0.001         # Moderate regularization
+  scheduler: "cosine"         # Cosine annealing schedule
+  max_grad_norm: 0.7          # Aggressive gradient clipping for NaN prevention
+  batch_size: 2               # Ultra-small batch for maximum stability
+  num_workers: 2              # Reduced workers for stability
 
 # Device
 device: "mps"
