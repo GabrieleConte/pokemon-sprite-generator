@@ -25,13 +25,13 @@ class NoiseScheduler:
         self.num_timesteps = num_timesteps
         
         # Cosine schedule for better training stability
-        self.betas = self._cosine_beta_schedule(num_timesteps, beta_start, beta_end)
-        self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+        self.betas = self._cosine_beta_schedule(num_timesteps, beta_start, beta_end).float()
+        self.alphas = (1.0 - self.betas).float()
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0).float()
         
         # Precompute values for sampling with numerical stability
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod).float()
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod).float()
         
         # Clamp to prevent numerical issues
         self.sqrt_alphas_cumprod = torch.clamp(self.sqrt_alphas_cumprod, min=1e-8)
@@ -40,7 +40,7 @@ class NoiseScheduler:
     def _cosine_beta_schedule(self, timesteps, beta_start, beta_end, s=0.008):
         """Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ"""
         steps = timesteps + 1
-        x = torch.linspace(0, timesteps, steps, dtype=torch.float64)
+        x = torch.linspace(0, timesteps, steps, dtype=torch.float32)  # Use float32 instead of float64
         alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
@@ -65,11 +65,11 @@ class NoiseScheduler:
     
     def to(self, device):
         """Move scheduler to device."""
-        self.betas = self.betas.to(device)
-        self.alphas = self.alphas.to(device)
-        self.alphas_cumprod = self.alphas_cumprod.to(device)
-        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device)
-        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
+        self.betas = self.betas.to(device, dtype=torch.float32)
+        self.alphas = self.alphas.to(device, dtype=torch.float32)
+        self.alphas_cumprod = self.alphas_cumprod.to(device, dtype=torch.float32)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device, dtype=torch.float32)
+        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device, dtype=torch.float32)
         return self
 
 
@@ -568,7 +568,7 @@ if __name__ == "__main__":
     config_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/config/train_config.yaml"
     config = load_config(config_path)
     
-    vae_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/logs/vae_best_model.pth"
+    vae_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/logs/vae_best_model_2.pth"
     
     trainer = ImprovedDiffusionTrainer(
         config=config,
