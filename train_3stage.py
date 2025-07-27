@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent / "src"))
 
 from src.training.vae_trainer import VAETrainer
-from src.training.diffusion_trainer import DiffusionTrainer
+from src.training.improved_diffusion_trainer import ImprovedDiffusionTrainer as DiffusionTrainer
 from src.training.final_trainer import FinalTrainer
 from src.training.vae_trainer import load_config
 from src.data import get_dataset_statistics

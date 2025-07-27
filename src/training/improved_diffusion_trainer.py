@@ -510,6 +510,22 @@ class ImprovedDiffusionTrainer:
             
         # self.logger.info(f"Checkpoint saved: {checkpoint_path}")
     
+    def load_checkpoint(self, checkpoint_path: str):
+        """Load training checkpoint."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        self.current_epoch = checkpoint['epoch']
+        self.global_step = checkpoint['global_step']
+        self.best_val_loss = checkpoint['best_val_loss']
+        
+        self.unet.load_state_dict(checkpoint['unet_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if self.scheduler and checkpoint['scheduler_state_dict']:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        self.logger.info(f"Checkpoint loaded from {checkpoint_path}")
+    
     def train(self):
         """Main training loop."""
         self.logger.info("Starting diffusion training...")
