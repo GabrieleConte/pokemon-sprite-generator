@@ -1,238 +1,323 @@
-# Pokemon Sprite Generator
+# Pokemon Sprite Generator: A Stable Diffusion-Inspired Architecture
 
-A deep learning project that generates Pokemon sprites from text descriptions using a transformer-based text encoder with CNN decoder architecture.
+## Overview
 
-## Features
+The Pokemon Sprite Generator is a text-to-image generation model specifically designed for creating Pokemon sprites from textual descriptions. The architecture follows the Stable Diffusion paradigm, employing a three-stage training pipeline that combines a Variational Autoencoder (VAE), a U-Net diffusion model, and a fine-tuned text encoder to generate high-quality 215×215 pixel Pokemon sprites.
 
-- **Text-to-Image Generation**: Generate Pokemon sprites from natural language descriptions
-- **Attention Mechanism**: Cross-attention between text and image features for better generation quality
-- **Comprehensive Training Pipeline**: Full-featured training system with monitoring and visualization
-- **Data Augmentation**: Robust data preprocessing and augmentation
-- **Experiment Tracking**: Support for TensorBoard and Weights & Biases
-- **Checkpointing**: Automatic model saving and resuming from checkpoints
-- **Attention Visualization**: Tools to visualize what the model focuses on
+The model's core objective is to learn the mapping from textual descriptions (e.g., "A small green creature with a bulb on its back") to visually coherent Pokemon sprites while maintaining the distinctive art style and characteristics of the Pokemon universe.
 
-## Architecture
+## Dataset and Data Loaders
 
-The model consists of:
-1. **Text Encoder**: BERT-based transformer (prajjwal1/bert-mini) for encoding Pokemon descriptions
-2. **Cross-Attention**: Attention mechanism between text and image features
-3. **CNN Decoder**: Convolutional decoder that generates 64x64 Pokemon sprites
-4. **Loss Function**: Combination of reconstruction loss (L1 + MSE) and attention regularization
+### Dataset Description
 
-## Dataset
+The Pokemon dataset consists of:
+- **Images**: 851 Pokemon sprites in PNG format (215×215 pixels) with transparent backgrounds
+- **Text Descriptions**: Concatenated descriptions including Pokemon names, types, abilities, and physical characteristics
+- **Structure**: CSV file mapping Pokemon national numbers to their corresponding descriptions
 
-The model expects a Pokemon dataset with:
-- **CSV file** (`data/pokemon.csv`): Contains Pokemon information with columns:
-  - `national_number`: Pokemon ID (001-898)
-  - `english_name`: Pokemon name
-  - `description`: Text description of the Pokemon
-- **Images folder** (`data/small_images/`): Contains 64x64 PNG images named `001.png` to `898.png`
+### Data Features
 
-## Installation
+- **Image Processing**: Transparent PNG sprites with proper background handling (configurable background color)
+- **Text Features**: Rich descriptions combining multiple attributes:
+  - Pokemon name and type classification
+  - Physical appearance descriptions
+  - Abilities and characteristics
+  - Evolutionary relationships
 
+### Data Transformations
+
+The data pipeline includes several sophisticated transformations:
+
+**Image Preprocessing**:
+- Transparency handling with configurable background colors (default: white)
+- Normalization to [-1, 1] range for stable training
+- Resizing to 215×215 pixels while maintaining aspect ratio
+- Data augmentation during training (rotation, color jitter, horizontal flipping)
+
+**Text Processing**:
+- BERT tokenization with padding and truncation (max length: 128 tokens)
+- Description cleaning to remove special tokens
+- Multi-attribute concatenation for rich semantic representation
+
+**Data Splits**:
+- Training: 80% with augmentation
+- Validation: 15% without augmentation  
+- Test: 5% for final evaluation
+
+## Architecture Components
+
+The Pokemon Sprite Generator employs a multi-component architecture inspired by Stable Diffusion, consisting of three main modules that work in synergy:
+
+### 1. Variational Autoencoder (VAE)
+
+**Purpose**: Learns a compact latent representation of Pokemon sprites, enabling efficient processing in a compressed space.
+
+**Architecture**:
+- **Encoder**: Progressive downsampling from 215×215×3 to 27×27×8 latent space
+- **Decoder**: Gradual upsampling back to original image dimensions with text conditioning
+- **Latent Space**: 8-channel feature maps at 27×27 resolution (8× compression)
+
+**Key Features**:
+- Group normalization for stable training
+- Residual connections for gradient flow
+- Cross-attention mechanisms for text conditioning
+- Perceptual loss integration using VGG16 features
+
+### 2. U-Net Diffusion Model
+
+**Purpose**: Performs iterative denoising in the latent space, gradually transforming noise into meaningful Pokemon sprite representations.
+
+**Architecture Design**:
+- **Input/Output**: 27×27×8 latent tensors
+- **Time Embedding**: Sinusoidal position encodings for timestep conditioning
+- **Cross-Attention**: Multi-head attention mechanisms for text-image alignment
+- **Residual Blocks**: Enhanced with time and text conditioning
+
+**Diffusion Process**:
+- **Forward Process**: Gradual noise addition over 1000 timesteps using cosine beta schedule
+- **Reverse Process**: Learned denoising using neural network predictions with numerical stability
+- **Sampling**: DDPM sampling with configurable inference steps and gradient clipping
+
+**Text Conditioning**:
+- Cross-attention at multiple resolution levels
+- Text embeddings integrated through attention mechanisms
+- Time-aware conditioning for temporal consistency
+
+### 3. Text Encoder
+
+**Purpose**: Converts textual descriptions into rich semantic embeddings that guide the generation process.
+
+**Implementation**:
+- **Base Model**: BERT-mini for computational efficiency
+- **Architecture**: Pre-trained transformer with task-specific fine-tuning
+- **Output**: 256-dimensional embeddings per token (max 32 tokens)
+- **Training Strategy**: Frozen during VAE/U-Net training, fine-tuned in final stage
+
+**Processing Pipeline**:
+- Tokenization with special token handling
+- Contextual embedding generation
+- Projection to model-specific dimensions
+- Sequence-level attention weighting
+
+### Component Interaction
+
+The three components work together in a hierarchical manner:
+
+1. **Text Encoder** processes descriptions into semantic embeddings
+2. **VAE Encoder** compresses images to latent representations during training
+3. **U-Net** learns to denoise latents conditioned on text embeddings
+4. **VAE Decoder** reconstructs final images from denoised latents
+
+### Enhanced Diffusion Training Features
+
+The improved diffusion trainer incorporates several advanced stability mechanisms:
+
+**Cosine Beta Scheduling**: Uses a cosine noise schedule instead of linear, providing better training dynamics and more stable convergence patterns.
+
+**Numerical Stability Safeguards**:
+- Real-time NaN/Inf detection during training with automatic batch skipping
+- Latent range clamping (-3.0 to 3.0) to prevent numerical explosion
+- Gradient explosion detection with adaptive clipping thresholds
+- Fallback mechanisms for corrupted noise addition
+
+**Adaptive Optimization**:
+- OneCycleLR scheduler with 10% warmup for stable learning rate progression
+- SmoothL1Loss (Huber loss) instead of MSE for more robust training
+- Ultra-conservative batch sizes (batch_size=2) for maximum stability
+- Separate optimization configuration for diffusion-specific parameters
+
+**Monitoring and Recovery**:
+- Comprehensive gradient norm tracking and logging
+- Automatic training interruption on critical failures
+- Enhanced logging with NaN batch counting and performance metrics
+- TensorBoard integration with detailed training diagnostics
+
+## Training Setup, Metaparameters, and Losses
+
+### Three-Stage Training Pipeline
+
+**Stage 1: VAE Training (80 epochs)**
+- Objective: Learn image compression and reconstruction
+- Components: VAE encoder/decoder + frozen text encoder
+- Focus: Establish robust latent space representation
+
+**Stage 2: Diffusion Training (500 epochs)**  
+- Objective: Learn noise-to-image mapping in latent space with numerical stability
+- Components: U-Net + frozen VAE + frozen text encoder
+- Focus: Master the denoising process with enhanced stability features
+
+**Stage 3: Final Fine-tuning (80 epochs)**
+- Objective: Optimize text-image alignment
+- Components: Fine-tuned text encoder + frozen VAE/U-Net
+- Focus: Improve semantic understanding and generation quality
+
+### Key Hyperparameters
+
+**Model Configuration**:
+
+- Latent dimensions: 8 channels, 27×27 spatial resolution
+- Text embedding: 256 dimensions
+- Diffusion timesteps: 1000 with cosine beta schedule
+- Beta schedule: Cosine (0.0001 to 0.02) for improved stability
+- Noise scheduler: Enhanced numerical stability with clamping
+
+**Optimization**:
+
+- Optimizer: AdamW with weight decay (0.0001)
+- Learning rates: 0.0001 (base), 0.00005 (fine-tuning)
+- Batch size: 4 (VAE/Final), 2 (Diffusion for ultra-stability)
+- Gradient clipping: 1.0 (VAE/Final), 0.7 (Diffusion with explosion detection)
+- Scheduler: OneCycleLR with cosine annealing and 10% warmup
+- Loss function: SmoothL1Loss (Huber) for diffusion stability
+
+**Training Stability**:
+
+- Conservative learning rates for numerical stability
+- Aggressive gradient clipping for NaN prevention
+- KL annealing to prevent posterior collapse
+- Free bits constraint (0.5) for VAE regularization
+- Cosine beta schedule for diffusion stability
+- NaN/Inf detection and handling during training
+- Latent range clamping to prevent explosion
+
+### Loss Functions
+
+**VAE Training Losses**:
+- **Reconstruction Loss**: L1 loss for pixel-level accuracy
+- **Perceptual Loss**: VGG16 feature matching for visual quality
+- **KL Divergence**: Regularization with annealing schedule
+- **Combined Weight**: Balanced combination with learned weights
+
+**Diffusion Training Loss**:
+
+- **Denoising Loss**: SmoothL1Loss (Huber loss) between predicted and actual noise for stability
+- **Timestep Sampling**: Uniform random sampling across 1000 steps
+- **Noise Scheduling**: Cosine beta schedule for improved training stability
+- **Numerical Stability**: NaN/Inf detection with fallback mechanisms
+
+**Final Training Losses**:
+- **CLIP Loss**: Text-image alignment using pre-trained CLIP model
+- **Reconstruction Consistency**: Maintain VAE reconstruction quality
+- **Combined Objective**: Weighted sum optimizing both alignment and quality
+
+### KL Annealing Strategy
+
+To prevent posterior collapse in the VAE:
+- **Annealing Period**: Epochs 0-20
+- **Weight Schedule**: 0.0 → 0.1 (final KL weight)
+- **Free Bits**: 0.5 minimum KL per latent dimension
+- **Purpose**: Encourage meaningful latent representations
+
+## Training Pipeline Usage
+
+### Configuration Setup
+
+The training pipeline uses YAML configuration files located in `config/train_config.yaml`. Key configuration sections include:
+
+**Experiment Settings**:
+- Output directory for checkpoints and logs
+- Experiment naming for organized results
+- Device selection (CUDA/MPS/CPU)
+
+**Model Parameters**:
+- Architecture dimensions and hyperparameters
+- Text encoder model selection
+- Diffusion process configuration
+
+**Data Configuration**:
+- Dataset paths and preprocessing parameters
+- Batch sizes and data loading settings
+- Train/validation/test split ratios
+
+**Training Schedules**:
+- Epoch counts for each training stage
+- Learning rates and optimization parameters
+- Logging and checkpoint intervals
+
+### Using the 3-Stage Training Pipeline
+
+**Basic Usage**:
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd pokemon-sprite-generator
-
-# Install dependencies
-pip install -r requirements.txt
+python train_3stage.py --config config/train_config.yaml --stage all
 ```
 
-## Usage
-
-### 1. Check Dataset Statistics
-
+**Stage-Specific Training**:
 ```bash
-python train.py --data-stats
+# Train only VAE (Stage 1)
+python train_3stage.py --stage 1 --experiment-name my_vae_experiment
+
+# Train only diffusion (Stage 2) with pre-trained VAE
+python train_3stage.py --stage 2 --vae-checkpoint path/to/vae_best_model.pth
+
+# Fine-tune text encoder (Stage 3)
+python train_3stage.py --stage 3 --vae-checkpoint path/to/vae.pth --diffusion-checkpoint path/to/diffusion.pth
 ```
 
-### 2. Start Training
-
+**Advanced Options**:
 ```bash
-# Basic training
-python train.py --config config/train_config.yaml
-
-# With Weights & Biases logging
-python train.py --use-wandb --experiment-name my_experiment
-
 # Resume from checkpoint
-python train.py --resume checkpoints/checkpoint_epoch_10.pth
+python train_3stage.py --resume path/to/checkpoint.pth
+
+# Show dataset statistics
+python train_3stage.py --data-stats
+
+# Custom experiment name
+python train_3stage.py --experiment-name pokemon_v2_experiment
 ```
 
-### 3. Monitor Training
+### Checkpoint Management
 
-- **TensorBoard**: View training metrics and generated samples
-  ```bash
-  tensorboard --logdir logs/
-  ```
+The training pipeline automatically manages checkpoints:
 
-- **Weights & Biases**: If enabled, view experiments at https://wandb.ai
+**Automatic Saving**:
+- Best model based on validation loss
+- Regular interval checkpoints (every 10 epochs)
+- Final model at training completion
 
-### 4. Example Usage
+**Checkpoint Contents**:
+- Model state dictionaries
+- Optimizer states
+- Training metadata and configuration
+- Loss history and metrics
 
-```bash
-# Run examples to test the system
-python example_usage.py
-```
+**Loading Strategy**:
+- Automatic checkpoint detection between stages
+- Manual checkpoint specification via command line
+- Graceful handling of missing checkpoints
 
-## Configuration
+### Monitoring and Visualization
 
-Edit `config/train_config.yaml` to customize training parameters:
+**TensorBoard Integration**:
+- Real-time loss tracking across all stages
+- Generated sample visualization
+- Learning rate and gradient monitoring
+- Latent space analysis
 
-```yaml
-# Model configuration
-model:
-  text_encoder:
-    model_name: "prajjwal1/bert-mini"
-    hidden_dim: 256
-    nhead: 8
-    num_encoder_layers: 6
-  
-  decoder:
-    noise_dim: 100
-    text_embedding_dim: 256
-    base_channels: 512
+**Sample Generation**:
+- Periodic sample generation during training
+- Progressive quality assessment
+- Text-image alignment visualization
 
-# Training configuration
-training:
-  batch_size: 16
-  num_epochs: 100
-  learning_rate: 0.0002
-  weight_decay: 0.0001
-  
-  # Loss weights
-  reconstruction_weight: 1.0
-  attention_weight: 0.1
+**Logging System**:
+- Comprehensive console and file logging
+- Error tracking and debugging information
+- Training progress and timing statistics
 
-# Data configuration
-data:
-  csv_path: "data/pokemon.csv"
-  image_dir: "data/small_images"
-  image_size: 64
-  train_split: 0.8
-  val_split: 0.2
-```
+### Configuration Customization
 
-## Project Structure
+**Performance Tuning**:
+- Adjust batch sizes based on GPU memory
+- Modify learning rates for convergence optimization
+- Configure checkpoint intervals for storage management
 
-```
-pokemon-sprite-generator/
-├── config/
-│   └── train_config.yaml          # Training configuration
-├── data/
-│   ├── pokemon.csv                # Pokemon dataset
-│   └── small_images/              # 64x64 Pokemon images
-├── src/
-│   ├── data/
-│   │   └── dataset.py             # Dataset and data loading
-│   ├── models/
-│   │   └── pokemon_generator.py   # Model architecture
-│   ├── training/
-│   │   └── trainer.py             # Training pipeline
-│   └── utils/
-│       ├── attention_utils.py     # Attention visualization
-│       └── tokenization_utils.py  # Text tokenization
-├── checkpoints/                   # Model checkpoints
-├── logs/                          # Training logs
-├── outputs/                       # Generated samples
-├── train.py                       # Main training script
-├── example_usage.py               # Usage examples
-└── requirements.txt               # Dependencies
-```
+**Quality vs Speed Trade-offs**:
+- Increase diffusion epochs for higher quality
+- Adjust perceptual loss weights for visual fidelity
+- Configure sampling steps for generation speed
 
-## Training Pipeline Features
+**Experimental Features**:
+- Alternative text encoders (BERT variants)
+- Different background color handling
+- Custom loss weight configurations
 
-### PokemonTrainer Class
-
-The `PokemonTrainer` class provides:
-
-- **Automatic Data Loading**: Creates train/validation splits from your dataset
-- **Model Initialization**: Sets up the Pokemon generator model with proper configuration
-- **Loss Computation**: Combines reconstruction and attention losses
-- **Monitoring**: Tracks training metrics and generates sample images
-- **Checkpointing**: Saves model state for resuming training
-- **Visualization**: Creates attention maps and training progress plots
-
-### Key Features
-
-1. **Robust Data Loading**: Handles missing images/descriptions gracefully
-2. **Mixed Loss Functions**: L1 + MSE reconstruction loss with attention regularization
-3. **Sample Generation**: Automatically generates samples during training for monitoring
-4. **Attention Visualization**: Creates attention maps to understand model focus
-5. **Experiment Tracking**: Supports both TensorBoard and Weights & Biases
-6. **Gradient Clipping**: Prevents gradient explosion during training
-7. **Learning Rate Scheduling**: Automatically adjusts learning rate during training
-
-## Attention Mechanism
-
-The model uses cross-attention between text and image features:
-
-- **Text Tokens**: BERT tokenization of Pokemon descriptions
-- **Image Features**: CNN feature maps from intermediate decoder layers
-- **Attention Weights**: Learnable attention between text tokens and spatial locations
-- **Visualization**: Tools to visualize which words the model focuses on for each image region
-
-## Monitoring and Visualization
-
-### TensorBoard Metrics
-
-- Training/validation losses
-- Reconstruction and attention loss components
-- Generated sample images
-- Attention weight visualizations
-- Learning rate schedules
-
-### Weights & Biases Integration
-
-- Experiment tracking across multiple runs
-- Hyperparameter sweeps
-- Model artifact storage
-- Collaborative experiment sharing
-
-## Troubleshooting
-
-### Common Issues
-
-1. **CUDA Out of Memory**: Reduce batch size in config
-2. **Missing Images**: Check image paths and file permissions
-3. **Tokenization Issues**: Ensure proper text preprocessing
-4. **Attention Errors**: Verify sequence length matching between text and attention
-
-### Performance Tips
-
-1. **GPU Memory**: Use smaller batch sizes for limited GPU memory
-2. **Training Speed**: Increase `num_workers` in data loading
-3. **Generation Quality**: Adjust loss weights in configuration
-4. **Monitoring**: Use `--data-stats` to verify dataset before training
-
-## Development
-
-### Adding New Features
-
-1. **New Loss Functions**: Add to `trainer.py` in the loss computation
-2. **Data Augmentation**: Modify dataset transforms in `dataset.py`
-3. **Architecture Changes**: Update model in `models/pokemon_generator.py`
-4. **Visualization Tools**: Add to `utils/` directory
-
-### Testing
-
-```bash
-# Test dataset loading
-python -c "from src.data import get_dataset_statistics; print(get_dataset_statistics('data/pokemon.csv', 'data/small_images'))"
-
-# Test model creation
-python -c "from src.training.trainer import PokemonTrainer, load_config; trainer = PokemonTrainer(load_config('config/train_config.yaml'))"
-```
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- BERT model: prajjwal1/bert-mini from Hugging Face
-- Pokemon dataset: Original Pokemon descriptions and sprites
-- PyTorch: Deep learning framework
-- Weights & Biases: Experiment tracking platform
+This architecture provides a robust and scalable foundation for Pokemon sprite generation, balancing computational efficiency with generation quality through its three-stage training approach and stable diffusion-inspired design.
