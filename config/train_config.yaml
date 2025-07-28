@@ -33,8 +33,8 @@ data:
 training:
   # Stage-specific epochs (optimized for practical training)
   vae_epochs: 80     # VAE foundation training
-  diffusion_epochs: 500  # U-Net training - increased for ultra-stable config
-  final_epochs: 80    # Final joint training
+  diffusion_epochs: 800  # U-Net training - increased significantly for slow learning
+  final_epochs: 60    # Final joint training
   
   # KL annealing for VAE (prevents posterior collapse)
   kl_anneal_start: 0
@@ -47,7 +47,7 @@ training:
   clip_weight: 0.3    # Increased for better text-image alignment
   
   # Training phases for final stage
-  phase1_epochs: 50   # Text encoder fine-tuning
+  phase1_epochs: 30   # Text encoder fine-tuning
   
   # Logging and checkpoints
   log_every: 25       # More frequent logging
@@ -69,12 +69,12 @@ optimization:
 # U-Net specific optimization (ultra-stable settings for diffusion training)
 unet_optimization:
   optimizer: "adamw"          # Ultra-stable AdamW optimizer
-  learning_rate: 0.0001       # Conservative learning rate for stability
+  learning_rate: 0.0005       # Increased for better learning (5x original)
   beta1: 0.9                  # Standard Adam betas
   beta2: 0.999
   weight_decay: 0.001         # Moderate regularization
   scheduler: "cosine"         # Cosine annealing schedule
-  max_grad_norm: 0.7          # Aggressive gradient clipping for NaN prevention
+  max_grad_norm: 0.7          # Increased clip for higher LR
   batch_size: 2               # Ultra-small batch for maximum stability
   num_workers: 2              # Reduced workers for stability
 

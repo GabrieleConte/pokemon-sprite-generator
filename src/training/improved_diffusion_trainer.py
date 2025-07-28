@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Dict, Any
 from tqdm import tqdm
 
-from src.models.vae_decoder import VAEEncoder, VAEDecoder
-from src.models.text_encoder import TextEncoder
-from src.models.unet import UNet
+from src.models import VAEEncoder, VAEDecoder
+from src.models import TextEncoder
+from src.models import UNet
 from src.data import create_data_loaders
 from src.utils import get_device
 
@@ -112,6 +112,9 @@ class ImprovedDiffusionTrainer:
         
         # Setup optimization
         self.setup_optimization()
+        
+        # Setup scheduler (after data loaders are ready)
+        self.setup_scheduler()
         
         # Setup monitoring
         self.setup_monitoring()
@@ -286,22 +289,36 @@ class ImprovedDiffusionTrainer:
                 eps=1e-6  # Smaller eps for stability
             )
         
-        # Learning rate scheduler with warmup
-        scheduler_type = unet_config.get('scheduler', opt_config.get('scheduler', 'cosine'))
+        # Store scheduler config for later setup (after data loaders are ready)
+        self.scheduler_config = {
+            'type': unet_config.get('scheduler', opt_config.get('scheduler', 'cosine')),
+            'lr': lr
+        }
+        
+        # Improved loss function with Huber loss for stability
+        self.criterion = nn.SmoothL1Loss(beta=0.1)  # More stable than MSE
+        
+    def setup_scheduler(self):
+        """Setup learning rate scheduler after data loaders are ready."""
+        scheduler_type = self.scheduler_config['type']
+        lr = self.scheduler_config['lr']
+        
         if scheduler_type == 'cosine':
+            # Calculate correct total steps based on actual data loader size
+            # This is critical for OneCycleLR to work properly
+            total_steps = self.config['training']['diffusion_epochs'] * len(self.data_loaders['train'])
+            self.logger.info(f"OneCycleLR total_steps: {total_steps} (epochs: {self.config['training']['diffusion_epochs']}, batches_per_epoch: {len(self.data_loaders['train'])})")
+            
             self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 self.optimizer,
                 max_lr=lr,
-                total_steps=self.config['training']['diffusion_epochs'] * 100,  # Estimate
+                total_steps=total_steps,  # Use actual total steps
                 pct_start=0.1,  # 10% warmup
                 anneal_strategy='cos'
             )
         else:
             # Fallback to constant LR
             self.scheduler = torch.optim.lr_scheduler.ConstantLR(self.optimizer, factor=1.0)
-        
-        # Improved loss function with Huber loss for stability
-        self.criterion = nn.SmoothL1Loss(beta=0.1)  # More stable than MSE
         
     def setup_monitoring(self):
         """Setup monitoring with TensorBoard."""
@@ -402,7 +419,7 @@ class ImprovedDiffusionTrainer:
                 # Update progress bar
                 pbar.set_postfix({
                     'loss': loss.item(),
-                    'lr': self.optimizer.param_groups[0]['lr'],
+                    'lr': f"{self.optimizer.param_groups[0]['lr']:.2e}",
                     'nans': nan_count
                 })
                 
@@ -421,7 +438,8 @@ class ImprovedDiffusionTrainer:
             return {'train_loss': float('inf')}
             
         avg_loss = total_loss / num_batches
-        self.logger.info(f"Epoch {epoch}: Average loss = {avg_loss:.6f}, NaN batches = {nan_count}")
+        current_lr = self.optimizer.param_groups[0]['lr']
+        self.logger.info(f"Epoch {epoch}: Average loss = {avg_loss:.6f}, NaN batches = {nan_count}, LR = {current_lr:.2e}")
         
         return {'train_loss': avg_loss}
     

@@ -417,10 +417,11 @@ class UNet(nn.Module):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
         
-        # Special initialization for final layer (zero init for noise prediction)
+        # Special initialization for final layer (small init for noise prediction)
         for module in self.final_conv.modules():
             if isinstance(module, nn.Conv2d):
-                nn.init.zeros_(module.weight)
+                # Use small but non-zero initialization
+                nn.init.xavier_uniform_(module.weight, gain=0.02)  # Very small gain
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
         
