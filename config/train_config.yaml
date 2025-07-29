@@ -22,7 +22,7 @@ model:
 data:
   csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
   image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
-  batch_size: 4  # Reduced for stability
+  batch_size: 8  # Reduced for stability
   image_size: 215
   num_workers: 4  # Reduced for stability
   pin_memory: true

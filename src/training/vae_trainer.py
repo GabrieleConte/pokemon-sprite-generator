@@ -356,6 +356,8 @@ class VAETrainer:
         
         # Get a batch of validation data
         val_batch = next(iter(self.data_loaders['val']))
+        batch_size = val_batch['image'].shape[0]
+        num_samples = min(num_samples, batch_size)  # Ensure we don't exceed batch size
         descriptions = val_batch['full_description'][:num_samples]
         real_images = val_batch['image'][:num_samples]
         
