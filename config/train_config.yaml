@@ -32,7 +32,7 @@ data:
 # Training configuration
 training:
   # Stage-specific epochs (optimized for practical training)
-  vae_epochs: 80     # VAE foundation training
+  vae_epochs: 60     # VAE foundation training
   diffusion_epochs: 800  # U-Net training - increased significantly for slow learning
   final_epochs: 60    # Final joint training
   
@@ -69,14 +69,14 @@ optimization:
 # U-Net specific optimization (ultra-stable settings for diffusion training)
 unet_optimization:
   optimizer: "adamw"          # Ultra-stable AdamW optimizer
-  learning_rate: 0.0005       # Increased for better learning (5x original)
+  learning_rate: 0.0001       # Increased for better learning
   beta1: 0.9                  # Standard Adam betas
   beta2: 0.999
   weight_decay: 0.001         # Moderate regularization
   scheduler: "cosine"         # Cosine annealing schedule
-  max_grad_norm: 0.7          # Increased clip for higher LR
-  batch_size: 2               # Ultra-small batch for maximum stability
-  num_workers: 2              # Reduced workers for stability
+  max_grad_norm: 0.3          # Increased clip for higher LR
+  batch_size: 8               # Increased batch size for stability
+  num_workers: 4              # Reduced workers for stability
 
 # Device
 device: "mps"

@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from typing import Dict, Any
 from tqdm import tqdm
+from torchvision import transforms
 
 from src.models import VAEEncoder, VAEDecoder
 from src.models import TextEncoder
@@ -504,6 +505,115 @@ class ImprovedDiffusionTrainer:
         
         return {'val_loss': avg_loss}
     
+    def ddpm_sample(self, text_emb: torch.Tensor, num_samples: int, fast_sampling: bool = True) -> torch.Tensor:
+        """
+        Generate samples using DDPM sampling process.
+        
+        Args:
+            text_emb: Text embeddings [batch_size, seq_len, text_dim]
+            num_samples: Number of samples to generate
+            fast_sampling: If True, use fewer denoising steps for faster generation during training
+            
+        Returns:
+            Generated latent vectors [batch_size, latent_dim, 27, 27]
+        """
+        # Start from pure noise
+        latent_shape = (num_samples, self.config['model'].get('latent_dim', 8), 27, 27)
+        x_t = torch.randn(latent_shape, device=self.device)
+        
+        # Ensure noise scheduler is on correct device
+        self.noise_scheduler.to(self.device)
+        
+        # Use fewer steps during training for speed
+        if fast_sampling:
+            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))  # Every 50th step
+        else:
+            timesteps_to_use = list(range(self.noise_scheduler.num_timesteps))
+        
+        # Reverse diffusion process
+        for t in reversed(timesteps_to_use):
+            # Create timestep tensor
+            timesteps = torch.full((num_samples,), t, device=self.device, dtype=torch.long)
+            
+            # Predict noise
+            with torch.no_grad():
+                predicted_noise = self.unet(x_t, timesteps, text_emb)
+            
+            # Get coefficients
+            alpha_t = self.noise_scheduler.alphas[t]
+            alpha_cumprod_t = self.noise_scheduler.alphas_cumprod[t]
+            beta_t = self.noise_scheduler.betas[t]
+            
+            # Compute mean of q(x_{t-1} | x_t, x_0)
+            if t > 0:
+                alpha_cumprod_t_prev = self.noise_scheduler.alphas_cumprod[t-1]
+            else:
+                alpha_cumprod_t_prev = torch.tensor(1.0, device=self.device)
+            
+            # DDPM formula
+            coeff1 = 1.0 / torch.sqrt(alpha_t)
+            coeff2 = beta_t / torch.sqrt(1 - alpha_cumprod_t)
+            
+            x_t = coeff1 * (x_t - coeff2 * predicted_noise)
+            
+            # Add noise (except for last step)
+            if t > 0 and not fast_sampling:  # Skip noise in fast sampling except for larger steps
+                noise = torch.randn_like(x_t)
+                sigma_t = torch.sqrt(beta_t)
+                x_t = x_t + sigma_t * noise
+            elif t > 0 and fast_sampling and t % 50 == 0:  # Add noise only at larger intervals
+                noise = torch.randn_like(x_t)
+                sigma_t = torch.sqrt(beta_t)
+                x_t = x_t + sigma_t * noise
+        
+        return x_t
+
+    def generate_samples(self, epoch: int, num_samples: int = 8):
+        """Generate sample images for monitoring using proper DDPM sampling."""
+        self.unet.eval()
+        self.vae_decoder.eval()
+        self.text_encoder.eval()
+        
+        # Sample descriptions from validation set
+        val_batch = next(iter(self.data_loaders['val']))
+        sample_descriptions = val_batch['full_description'][:num_samples]
+        
+        with torch.no_grad():
+            # Encode text
+            text_emb = self.text_encoder(sample_descriptions)
+            
+            # Generate in smaller batches to avoid memory issues
+            batch_size = min(4, num_samples)  # Generate max 4 at a time
+            all_generated_images = []
+            
+            for i in range(0, num_samples, batch_size):
+                batch_end = min(i + batch_size, num_samples)
+                batch_text_emb = text_emb[i:batch_end]
+                batch_descriptions = sample_descriptions[i:batch_end]
+                
+                # Generate latent vectors using DDPM sampling
+                generated_latents = self.ddpm_sample(batch_text_emb, batch_end - i)
+                
+                # Decode to images
+                generated_images = self.vae_decoder(generated_latents, batch_text_emb)
+                
+                # Denormalize and clamp
+                generated_images = (generated_images + 1.0) / 2.0
+                generated_images = torch.clamp(generated_images, 0, 1)
+                
+                all_generated_images.append(generated_images)
+                
+                # Save individual samples
+                for j, (img, desc) in enumerate(zip(generated_images, batch_descriptions)):
+                    sample_idx = i + j
+                    img_pil = transforms.ToPILImage()(img.cpu())
+                    img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{sample_idx}.png")
+                    
+                    # Log to TensorBoard
+                    self.writer.add_image(f'Diffusion Generated/Sample_{sample_idx}', img.cpu(), epoch)
+                
+        self.logger.info(f"Generated {num_samples} samples for epoch {epoch}")
+    
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         """Save training checkpoint."""
         checkpoint = {
@@ -562,6 +672,10 @@ class ImprovedDiffusionTrainer:
             # Validation epoch
             val_metrics = self.validate_epoch(epoch)
             
+            # Generate samples
+            if epoch % self.config['training']['sample_every'] == 0:
+                self.generate_samples(epoch)
+            
             # Save checkpoint
             is_best = val_metrics['val_loss'] < self.best_val_loss
             if is_best:
@@ -569,6 +683,10 @@ class ImprovedDiffusionTrainer:
             
             if epoch % self.config['training']['save_every'] == 0 or is_best:
                 self.save_checkpoint(epoch, is_best)
+            
+            # Logging
+            self.logger.info(f"Epoch {epoch}: train_loss={train_metrics['train_loss']:.4f}, "
+                           f"val_loss={val_metrics['val_loss']:.4f}")
         
         self.logger.info("diffusion training completed!")
         self.writer.close()
