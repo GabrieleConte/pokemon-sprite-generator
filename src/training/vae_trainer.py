@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Dict, Tuple, Any
 import matplotlib.pyplot as plt
 import yaml
+import time  # Add for timing
+from tqdm import tqdm  # Add for progress bars
 
 from src.models.vae_decoder import PokemonVAE
 from src.models.text_encoder import TextEncoder
@@ -97,23 +99,31 @@ class VAETrainer:
         """Initialize the VAE model and text encoder."""
         model_config = self.config['model']
         
-        # Text encoder (frozen during VAE training)
+        # Text encoder (now trainable for fine-tuning BERT-large on Pokemon descriptions)
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
             hidden_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
-        # Freeze text encoder for VAE training
+        # Keep text encoder trainable for domain adaptation
         for param in self.text_encoder.parameters():
-            param.requires_grad = False
+            param.requires_grad = True
+        
+        print(f"Text encoder trainable parameters: {sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad):,}")
             
         # VAE model
         self.vae = PokemonVAE(
-            latent_dim=model_config.get('latent_dim', 1024),
+            latent_dim=model_config.get('latent_dim', 8),  # Fixed: was 1024, should be 8
             text_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
         self.logger.info(f"VAE initialized with {sum(p.numel() for p in self.vae.parameters())} parameters")
+        
+        # Calculate total trainable parameters
+        vae_trainable = sum(p.numel() for p in self.vae.parameters() if p.requires_grad)
+        text_trainable = sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad)
+        total_trainable = vae_trainable + text_trainable
+        self.logger.info(f"Total trainable parameters: VAE={vae_trainable:,}, TextEncoder={text_trainable:,}, Total={total_trainable:,}")
         
     def setup_data_loaders(self):
         """Setup data loaders for training, validation, and testing."""
@@ -143,19 +153,36 @@ class VAETrainer:
         """Setup optimizer and learning rate scheduler."""
         opt_config = self.config['optimization']
         
-        # Optimizer for VAE
+        # Create parameter groups for different learning rates
+        vae_lr = opt_config['learning_rate']
+        text_lr = opt_config.get('text_encoder_lr', vae_lr * 0.1)  # Lower LR for pre-trained text encoder
+        
+        param_groups = [
+            {
+                'params': self.vae.parameters(),
+                'lr': vae_lr,
+                'name': 'vae'
+            },
+            {
+                'params': self.text_encoder.parameters(), 
+                'lr': text_lr,
+                'name': 'text_encoder'
+            }
+        ]
+        
+        # Optimizer for both VAE and text encoder
         if opt_config['optimizer'] == 'adam':
             self.optimizer = optim.Adam(
-                self.vae.parameters(),
-                lr=opt_config['learning_rate'],
-                betas=(opt_config['beta1'], opt_config['beta2'])
+                param_groups,
+                betas=(opt_config.get('beta1', 0.9), opt_config.get('beta2', 0.999))
             )
         elif opt_config['optimizer'] == 'adamw':
             self.optimizer = optim.AdamW(
-                self.vae.parameters(),
-                lr=opt_config['learning_rate'],
-                weight_decay=opt_config['weight_decay']
+                param_groups,
+                weight_decay=opt_config.get('weight_decay', 0.01)
             )
+        
+        self.logger.info(f"Optimizer setup: VAE LR={vae_lr:.2e}, Text Encoder LR={text_lr:.2e}")
         
         # Learning rate scheduler
         if opt_config['scheduler'] == 'cosine':
@@ -166,8 +193,8 @@ class VAETrainer:
         elif opt_config['scheduler'] == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=opt_config['step_size'],
-                gamma=opt_config['gamma']
+                step_size=opt_config.get('step_size', 30),
+                gamma=opt_config.get('gamma', 0.1)
             )
         
         # Loss function with perceptual loss
@@ -253,60 +280,112 @@ class VAETrainer:
         """Train for one epoch."""
         self.current_epoch = epoch
         self.vae.train()
-        self.text_encoder.eval()
+        self.text_encoder.train()  # Now trainable for fine-tuning
         
         total_loss = 0.0
         total_recon_loss = 0.0
         total_kl_loss = 0.0
         num_batches = len(self.data_loaders['train'])
         
-        for batch_idx, batch in enumerate(self.data_loaders['train']):
+        # Add timing for performance monitoring
+        epoch_start_time = time.time()
+        batch_times = []
+        
+        # Create progress bar for batches
+        pbar = tqdm(enumerate(self.data_loaders['train']), 
+                   total=num_batches,
+                   desc=f'Epoch {epoch+1}/{self.config["training"]["vae_epochs"]}',
+                   leave=False,
+                   dynamic_ncols=True)
+        
+        for batch_idx, batch in pbar:
+            batch_start_time = time.time()
+            
             images = batch['image'].to(self.device)
             descriptions = batch['full_description']
             
-            # Encode text
-            with torch.no_grad():
-                text_emb = self.text_encoder(descriptions)
+            # Encode text (now with gradients for fine-tuning)
+            text_start_time = time.time()
+            text_emb = self.text_encoder(descriptions)
+            text_time = time.time() - text_start_time
             
             # Forward pass through VAE
+            vae_start_time = time.time()
             outputs = self.vae(images, text_emb, mode='train')
+            vae_time = time.time() - vae_start_time
             
             # Compute loss
+            loss_start_time = time.time()
             loss, loss_dict = self.compute_vae_loss(outputs, images, epoch)
+            loss_time = time.time() - loss_start_time
             
             # Backward pass
+            backward_start_time = time.time()
             self.optimizer.zero_grad()
             loss.backward()
             
-            # Gradient clipping
+            # Gradient clipping for both VAE and text encoder
             torch.nn.utils.clip_grad_norm_(self.vae.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.text_encoder.parameters(), max_norm=0.5)  # Lower for pre-trained model
             
             self.optimizer.step()
+            backward_time = time.time() - backward_start_time
+            
+            batch_time = time.time() - batch_start_time
+            batch_times.append(batch_time)
             
             # Update metrics
             total_loss += loss_dict['total_loss']
             total_recon_loss += loss_dict['reconstruction_loss']
             total_kl_loss += loss_dict['kl_loss']
             
-            # Log progress
+            # Update progress bar with current metrics
+            avg_batch_time = sum(batch_times[-10:]) / min(len(batch_times), 10)  # Last 10 batches
+            pbar.set_postfix({
+                'Loss': f'{loss_dict["total_loss"]:.4f}',
+                'Recon': f'{loss_dict["reconstruction_loss"]:.4f}',
+                'KL': f'{loss_dict["kl_loss"]:.4f}',
+                'KL_w': f'{loss_dict["kl_weight"]:.3f}',
+                'Time': f'{avg_batch_time:.2f}s',
+                'Text': f'{text_time:.3f}s',
+                'VAE': f'{vae_time:.3f}s',
+                'Loss_comp': f'{loss_time:.3f}s',
+                'Backwd': f'{backward_time:.3f}s'
+            })
+            
+            # Log progress with timing information
             if batch_idx % self.config['training']['log_every'] == 0:
                 self.logger.info(f'Epoch {epoch}, Batch {batch_idx}/{num_batches}, '
                                f'Loss: {loss_dict["total_loss"]:.4f}, '
                                f'Recon: {loss_dict["reconstruction_loss"]:.4f}, '
                                f'KL: {loss_dict["kl_loss"]:.4f}, '
-                               f'KL Weight: {loss_dict["kl_weight"]:.4f}')
+                               f'KL Weight: {loss_dict["kl_weight"]:.4f}, '
+                               f'Batch Time: {avg_batch_time:.2f}s '
+                               f'(Text: {text_time:.3f}s, VAE: {vae_time:.3f}s, '
+                               f'Loss: {loss_time:.3f}s, Backward: {backward_time:.3f}s)')
             
             self.global_step += 1
+        
+        pbar.close()
+        
+        epoch_time = time.time() - epoch_start_time
+        avg_batch_time = sum(batch_times) / len(batch_times)
         
         # Calculate average losses
         avg_loss = total_loss / num_batches
         avg_recon_loss = total_recon_loss / num_batches
         avg_kl_loss = total_kl_loss / num_batches
         
+        self.logger.info(f'Epoch {epoch} completed in {epoch_time:.1f}s, '
+                        f'avg batch time: {avg_batch_time:.2f}s, '
+                        f'estimated batches/hour: {3600/avg_batch_time:.1f}')
+        
         return {
             'loss': avg_loss,
             'recon_loss': avg_recon_loss,
-            'kl_loss': avg_kl_loss
+            'kl_loss': avg_kl_loss,
+            'epoch_time': epoch_time,
+            'avg_batch_time': avg_batch_time
         }
     
     def validate_epoch(self, epoch: int) -> Dict[str, float]:
@@ -319,8 +398,14 @@ class VAETrainer:
         total_kl_loss = 0.0
         num_batches = len(self.data_loaders['val'])
         
+        # Create progress bar for validation
+        pbar = tqdm(self.data_loaders['val'], 
+                   desc=f'Validation Epoch {epoch+1}',
+                   leave=False,
+                   dynamic_ncols=True)
+        
         with torch.no_grad():
-            for batch in self.data_loaders['val']:
+            for batch in pbar:
                 images = batch['image'].to(self.device)
                 descriptions = batch['full_description']
                 
@@ -337,6 +422,15 @@ class VAETrainer:
                 total_loss += loss_dict['total_loss']
                 total_recon_loss += loss_dict['reconstruction_loss']
                 total_kl_loss += loss_dict['kl_loss']
+                
+                # Update progress bar
+                pbar.set_postfix({
+                    'Val_Loss': f'{loss_dict["total_loss"]:.4f}',
+                    'Val_Recon': f'{loss_dict["reconstruction_loss"]:.4f}',
+                    'Val_KL': f'{loss_dict["kl_loss"]:.4f}'
+                })
+        
+        pbar.close()
         
         # Calculate average losses
         avg_loss = total_loss / num_batches
@@ -452,8 +546,15 @@ class VAETrainer:
         """Main training loop."""
         self.logger.info(f'Starting VAE training for {self.config["training"]["vae_epochs"]} epochs')
         
-        for epoch in range(self.current_epoch, self.config['training']['vae_epochs']):
-            self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["vae_epochs"]}')
+        # Create progress bar for epochs
+        epoch_pbar = tqdm(range(self.current_epoch, self.config['training']['vae_epochs']),
+                         desc='VAE Training',
+                         unit='epoch',
+                         dynamic_ncols=True)
+        
+        for epoch in epoch_pbar:
+            epoch_desc = f'Epoch {epoch + 1}/{self.config["training"]["vae_epochs"]}'
+            epoch_pbar.set_description(epoch_desc)
             
             # Train
             train_metrics = self.train_epoch(epoch)
@@ -474,11 +575,21 @@ class VAETrainer:
                            f'Recon: {val_metrics["recon_loss"]:.4f}, '
                            f'KL: {val_metrics["kl_loss"]:.4f}')
             
+            # Update epoch progress bar with current metrics
+            epoch_pbar.set_postfix({
+                'Train_Loss': f'{train_metrics["loss"]:.4f}',
+                'Val_Loss': f'{val_metrics["loss"]:.4f}',
+                'Epoch_Time': f'{train_metrics["epoch_time"]:.1f}s',
+                'Batch_Time': f'{train_metrics["avg_batch_time"]:.2f}s'
+            })
+            
             # TensorBoard logging
             self.tb_writer.add_scalar('VAE Train/Loss', train_metrics['loss'], epoch)
             self.tb_writer.add_scalar('VAE Train/Recon_Loss', train_metrics['recon_loss'], epoch)
             self.tb_writer.add_scalar('VAE Train/KL_Loss', train_metrics['kl_loss'], epoch)
             self.tb_writer.add_scalar('VAE Train/KL_Weight', kl_weight, epoch)
+            self.tb_writer.add_scalar('VAE Train/Epoch_Time', train_metrics['epoch_time'], epoch)
+            self.tb_writer.add_scalar('VAE Train/Batch_Time', train_metrics['avg_batch_time'], epoch)
             self.tb_writer.add_scalar('VAE Val/Loss', val_metrics['loss'], epoch)
             self.tb_writer.add_scalar('VAE Val/Recon_Loss', val_metrics['recon_loss'], epoch)
             self.tb_writer.add_scalar('VAE Val/KL_Loss', val_metrics['kl_loss'], epoch)
@@ -497,6 +608,7 @@ class VAETrainer:
             
             self.current_epoch = epoch + 1
         
+        epoch_pbar.close()
         self.logger.info('VAE training completed!')
         self.tb_writer.close()
 

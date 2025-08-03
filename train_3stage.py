@@ -3,7 +3,7 @@
 Three-stage training script for Pokemon sprite generation with Stable Diffusion-like architecture.
 
 Stage 1: Train VAE with perceptual loss
-Stage 2: Train U-Net for diffusion denoising
+Stage 2: Train U-Net for diffusion denoising (with diffusers library)
 Stage 3: Fine-tune text encoder with frozen VAE and U-Net
 """
 
@@ -17,12 +17,14 @@ sys.path.append(str(Path(__file__).parent / "src"))
 
 from src.training.vae_trainer import VAETrainer
 from src.training.improved_diffusion_trainer import ImprovedDiffusionTrainer as DiffusionTrainer
+from src.training.diffusers_trainer import DiffusersTrainer
 from src.training.final_trainer import FinalTrainer
 from src.training.vae_trainer import load_config
 from src.data import get_dataset_statistics
-
+from optimize_mps_memory import setup_mps_memory_optimization
 
 def main():
+    setup_mps_memory_optimization()
     parser = argparse.ArgumentParser(description='Train Pokemon Generator (3-Stage Training)')
     parser.add_argument('--config', 
                        default='config/train_config.yaml',
@@ -31,6 +33,9 @@ def main():
                        choices=['1', '2', '3', 'all'],
                        default='all',
                        help='Training stage to run (1: VAE, 2: Diffusion, 3: Final, all: All stages)')
+    parser.add_argument('--use-diffusers',
+                       action='store_true',
+                       help='Use diffusers library U-Net instead of custom implementation')
     parser.add_argument('--vae-checkpoint', 
                        default=None,
                        help='Path to pre-trained VAE checkpoint (required for stages 2 and 3)')
@@ -97,7 +102,10 @@ def main():
     # Stage 2: Diffusion Training
     if args.stage in ['2', 'all']:
         print("="*50)
-        print("STAGE 2: U-Net Diffusion Training")
+        if args.use_diffusers:
+            print("STAGE 2: U-Net Diffusion Training (Diffusers Library)")
+        else:
+            print("STAGE 2: U-Net Diffusion Training (Custom Implementation)")
         print("="*50)
         
         # Determine VAE checkpoint path
@@ -111,11 +119,19 @@ def main():
         if not os.path.exists(vae_checkpoint_path):
             raise FileNotFoundError(f"VAE checkpoint not found at {vae_checkpoint_path}")
         
-        diffusion_trainer = DiffusionTrainer(
-            config=config,
-            vae_checkpoint_path=vae_checkpoint_path,
-            experiment_name=f"{args.experiment_name}_diffusion"
-        )
+        # Choose trainer based on flag
+        if args.use_diffusers:
+            diffusion_trainer = DiffusersTrainer(
+                config=config,
+                vae_checkpoint_path=str(vae_checkpoint_path),
+                experiment_name=f"{args.experiment_name}_diffusers"
+            )
+        else:
+            diffusion_trainer = DiffusionTrainer(
+                config=config,
+                vae_checkpoint_path=str(vae_checkpoint_path),
+                experiment_name=f"{args.experiment_name}_diffusion"
+            )
         
         if args.resume and args.stage == '2':
             print(f"Resuming diffusion training from checkpoint: {args.resume}")
@@ -124,7 +140,8 @@ def main():
         diffusion_trainer.train()
         
         # Set diffusion checkpoint path for next stage
-        diffusion_checkpoint_path = experiment_dir / f"{args.experiment_name}_diffusion" / "checkpoints" / "diffusion_best_model.pth"
+        trainer_suffix = "diffusers" if args.use_diffusers else "diffusion"
+        diffusion_checkpoint_path = experiment_dir / f"{args.experiment_name}_{trainer_suffix}" / "checkpoints" / "diffusion_best_model.pth"
         
         print(f"Stage 2 complete! Diffusion checkpoint saved to: {diffusion_checkpoint_path}")
     
@@ -145,7 +162,9 @@ def main():
         if args.diffusion_checkpoint:
             diffusion_checkpoint_path = args.diffusion_checkpoint
         elif args.stage == 'all':
-            diffusion_checkpoint_path = experiment_dir / f"{args.experiment_name}_diffusion" / "checkpoints" / "diffusion_best_model.pth"
+            # Use appropriate suffix based on previous stage
+            trainer_suffix = "diffusers" if args.use_diffusers else "diffusion"
+            diffusion_checkpoint_path = experiment_dir / f"{args.experiment_name}_{trainer_suffix}" / "checkpoints" / "diffusion_best_model.pth"
         else:
             raise ValueError("Diffusion checkpoint path required for stage 3. Use --diffusion-checkpoint argument.")
         
@@ -159,8 +178,8 @@ def main():
         # For now, we'll use the existing final trainer with the VAE checkpoint
         final_trainer = FinalTrainer(
             config=config,
-            vae_checkpoint_path=vae_checkpoint_path,
-            diffusion_checkpoint_path=diffusion_checkpoint_path,
+            vae_checkpoint_path=str(vae_checkpoint_path),
+            diffusion_checkpoint_path=str(diffusion_checkpoint_path),
             experiment_name=f"{args.experiment_name}_final"
         )
         

@@ -13,10 +13,11 @@ class VGGPerceptualLoss(nn.Module):
     """
     Perceptual loss using VGG16 features.
     Computes L1 loss between VGG features of generated and target images.
+    Optimized for speed with fewer layers and efficient computation.
     """
     
-    def __init__(self, feature_layers: List[int] = [3, 8, 15, 22], 
-                 weights: List[float] = [1.0, 1.0, 1.0, 1.0]):
+    def __init__(self, feature_layers: List[int] = [8, 15], 
+                 weights: List[float] = [1.0, 1.0]):
         """
         Initialize VGG perceptual loss.
         
@@ -74,8 +75,8 @@ class VGGPerceptualLoss(nn.Module):
         generated = torch.clamp(generated, 0, 1)
         target = torch.clamp(target, 0, 1)
         
-        # Resize to minimum VGG input size if needed
-        if generated.shape[-1] < 224:
+        # Skip resizing if images are close to VGG input size - major speedup!
+        if generated.shape[-1] < 200:  # Only resize if significantly smaller
             generated = F.interpolate(generated, size=(224, 224), mode='bilinear', align_corners=False)
             target = F.interpolate(target, size=(224, 224), mode='bilinear', align_corners=False)
         
