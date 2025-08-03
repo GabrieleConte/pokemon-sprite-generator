@@ -212,11 +212,17 @@ class DiffusersTrainer:
         """Initialize models and load pre-trained VAE."""
         model_config = self.config['model']
         
-        # Text encoder (frozen during diffusion training)
+        # Get fine-tuning strategy from config, default to 'minimal' for memory efficiency
+        finetune_strategy = model_config.get('bert_finetune_strategy', 'minimal')
+        
+        # Text encoder with selective fine-tuning (trainable during diffusion training)
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
-            hidden_dim=model_config['text_embedding_dim']
+            hidden_dim=model_config['text_embedding_dim'],
+            finetune_strategy=finetune_strategy
         ).to(self.device)
+        
+        print(f"Text encoder trainable parameters: {sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad):,}")
         
         # Load pre-trained VAE
         print(f"Loading VAE from {self.vae_checkpoint_path}")
@@ -262,25 +268,38 @@ class DiffusersTrainer:
             print("Starting with randomly initialized VAE weights.")
             print("This is fine if you plan to train the VAE from scratch.")
         
-        # Load text encoder weights if available
+        # Load text encoder weights if available (but respect the fine-tuning strategy)
         if 'text_encoder_state_dict' in vae_checkpoint:
-            self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
-            print("✅ Loaded text encoder weights from checkpoint")
+            try:
+                self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
+                print("✅ Loaded text encoder weights from checkpoint")
+                
+                # Re-apply fine-tuning strategy after loading weights
+                self.text_encoder._apply_finetune_strategy()
+                print(f"✅ Re-applied fine-tuning strategy: {finetune_strategy}")
+                
+            except Exception as e:
+                print(f"⚠️ Could not load text encoder weights: {e}")
+                print("Continuing with current text encoder initialization")
         
-        # Freeze VAE but keep text encoder trainable
+        # Freeze VAE components
         for param in self.vae_encoder.parameters():
             param.requires_grad = False
         for param in self.vae_decoder.parameters():
             param.requires_grad = False
         
-        # Keep text encoder trainable for fine-tuning
-        for param in self.text_encoder.parameters():
-            param.requires_grad = True
-        
-        # Set VAE to eval mode, but keep text encoder in train mode
+        # Set VAE to eval mode, but keep text encoder in train mode based on strategy
         self.vae_encoder.eval()
         self.vae_decoder.eval()
-        self.text_encoder.train()  # Enable training mode for text encoder
+        
+        # Only set text encoder to train mode if it has trainable parameters
+        text_trainable_params = sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad)
+        if text_trainable_params > 0:
+            self.text_encoder.train()
+            print(f"✅ Text encoder in training mode with {text_trainable_params:,} trainable parameters")
+        else:
+            self.text_encoder.eval()
+            print("✅ Text encoder frozen - set to eval mode")
         
         # Diffusers U-Net for diffusion denoising (now using pre-trained weights)
         self.unet = DiffusersUNet(
@@ -301,7 +320,20 @@ class DiffusersTrainer:
             beta_end=model_config.get('beta_end', 0.02)
         )
         
-        self.logger.info(f"DiffusersUNet initialized with {self.unet.get_parameter_count():,} parameters")
+        # Print parameter summary
+        unet_trainable = sum(p.numel() for p in self.unet.parameters() if p.requires_grad)
+        text_trainable = sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad)
+        total_trainable = unet_trainable + text_trainable
+        
+        self.logger.info(f"📊 Diffusion Training Parameter Summary:")
+        self.logger.info(f"   U-Net trainable: {unet_trainable:,}")
+        self.logger.info(f"   Text encoder trainable: {text_trainable:,}")
+        self.logger.info(f"   Total trainable: {total_trainable:,}")
+        self.logger.info(f"   Fine-tuning strategy: {finetune_strategy}")
+        
+        # Memory usage estimate
+        memory_gb = (total_trainable * 4 * 3) / (1024**3)  # 4 bytes per param, 3x for gradients/optimizer states
+        self.logger.info(f"   Estimated training memory: ~{memory_gb:.2f} GB")
         
     def setup_data_loaders(self):
         """Setup data loaders for training, validation, and testing."""
@@ -340,20 +372,29 @@ class DiffusersTrainer:
         unet_lr = self.training_config.get('learning_rate', 5e-4)
         text_lr = self.training_config.get('text_encoder_lr', unet_lr * 0.1)  # Default: 10x smaller LR for text encoder
         
+        # Check if text encoder has trainable parameters
+        text_trainable_params = [p for p in self.text_encoder.parameters() if p.requires_grad]
+        
         param_groups = [
             {
                 'params': self.unet.parameters(),
                 'lr': unet_lr,
                 'name': 'unet'
-            },
-            {
-                'params': self.text_encoder.parameters(),
-                'lr': text_lr,
-                'name': 'text_encoder'
             }
         ]
         
-        # Optimizer for both U-Net and text encoder
+        # Only add text encoder to optimizer if it has trainable parameters
+        if text_trainable_params:
+            param_groups.append({
+                'params': text_trainable_params,
+                'lr': text_lr,
+                'name': 'text_encoder'
+            })
+            self.logger.info(f"✅ Text encoder added to optimizer with LR={text_lr:.2e}")
+        else:
+            self.logger.info("✅ Text encoder frozen - not added to optimizer")
+        
+        # Optimizer for U-Net and optionally text encoder
         self.optimizer = optim.AdamW(
             param_groups,
             weight_decay=self.training_config.get('weight_decay', 0.01),
@@ -373,7 +414,11 @@ class DiffusersTrainer:
         elif self.use_mixed_precision:
             print("✅ Mixed precision training enabled")
         
-        self.logger.info(f"Optimizer setup: U-Net LR={unet_lr:.2e}, Text Encoder LR={text_lr:.2e}")
+        self.logger.info(f"Optimizer setup: U-Net LR={unet_lr:.2e}")
+        if text_trainable_params:
+            self.logger.info(f"Text Encoder LR={text_lr:.2e}, Trainable params: {len(text_trainable_params)}")
+        else:
+            self.logger.info("Text Encoder: Frozen (no trainable parameters)")
         
     def setup_scheduler(self):
         """Setup learning rate scheduler."""
@@ -497,10 +542,16 @@ class DiffusersTrainer:
                 self.optimizer.zero_grad()
                 loss.backward()
                 
-                # Gradient clipping for both U-Net and text encoder
+                # Gradient clipping for U-Net and optionally text encoder
                 max_grad_norm = self.training_config.get('max_grad_norm', 1.0)
                 unet_grad_norm = torch.nn.utils.clip_grad_norm_(self.unet.parameters(), max_norm=max_grad_norm)
-                text_grad_norm = torch.nn.utils.clip_grad_norm_(self.text_encoder.parameters(), max_norm=max_grad_norm * 0.5)  # Smaller clip for text encoder
+                
+                # Only clip text encoder gradients if it has trainable parameters
+                text_trainable_params = [p for p in self.text_encoder.parameters() if p.requires_grad]
+                if text_trainable_params:
+                    text_grad_norm = torch.nn.utils.clip_grad_norm_(text_trainable_params, max_norm=max_grad_norm * 0.5)  # Smaller clip for text encoder
+                else:
+                    text_grad_norm = torch.tensor(0.0)  # No gradients to clip
                 
                 self.optimizer.step()
                 if self.lr_scheduler is not None:
@@ -509,7 +560,8 @@ class DiffusersTrainer:
                 # Log gradient norms periodically for monitoring
                 if self.global_step % 100 == 0:
                     self.writer.add_scalar('Train/UNet_Grad_Norm', unet_grad_norm.item(), self.global_step)
-                    self.writer.add_scalar('Train/TextEncoder_Grad_Norm', text_grad_norm.item(), self.global_step)
+                    if text_trainable_params:
+                        self.writer.add_scalar('Train/TextEncoder_Grad_Norm', text_grad_norm.item(), self.global_step)
                 
                 # Memory cleanup for MPS to prevent accumulation
                 if self.device.type == 'mps' and batch_idx % 5 == 0:  # Every 5 batches
@@ -520,21 +572,30 @@ class DiffusersTrainer:
                 num_batches += 1
                 self.global_step += 1
                 
-                # Update progress bar with both learning rates
+                # Update progress bar with learning rates
                 unet_lr = self.optimizer.param_groups[0]['lr']
-                text_lr = self.optimizer.param_groups[1]['lr']
-                pbar.set_postfix({
+                pbar_dict = {
                     'loss': f"{loss.item():.4f}",
                     'avg_loss': f"{total_loss / num_batches:.4f}",
-                    'unet_lr': f"{unet_lr:.2e}",
-                    'text_lr': f"{text_lr:.2e}"
-                })
+                    'unet_lr': f"{unet_lr:.2e}"
+                }
+                
+                # Add text encoder LR if it's being trained
+                if len(self.optimizer.param_groups) > 1:
+                    text_lr = self.optimizer.param_groups[1]['lr']
+                    pbar_dict['text_lr'] = f"{text_lr:.2e}"
+                
+                pbar.set_postfix(pbar_dict)
                 
                 # Log to tensorboard
                 if self.global_step % 100 == 0:
                     self.writer.add_scalar('Train/Loss', loss.item(), self.global_step)
                     self.writer.add_scalar('Train/UNet_LR', unet_lr, self.global_step)
-                    self.writer.add_scalar('Train/TextEncoder_LR', text_lr, self.global_step)
+                    
+                    # Only log text encoder LR if it's being trained
+                    if len(self.optimizer.param_groups) > 1:
+                        text_lr = self.optimizer.param_groups[1]['lr']
+                        self.writer.add_scalar('Train/TextEncoder_LR', text_lr, self.global_step)
                     
                     # Log average timestep for monitoring diffusion schedule usage
                     avg_timestep = timesteps.float().mean().item()
@@ -797,17 +858,22 @@ class DiffusersTrainer:
                 
                 # Log current learning rates at epoch level
                 unet_lr = self.optimizer.param_groups[0]['lr']
-                text_lr = self.optimizer.param_groups[1]['lr']
                 self.writer.add_scalar('Epoch/UNet_LR', unet_lr, epoch)
-                self.writer.add_scalar('Epoch/TextEncoder_LR', text_lr, epoch)
+                
+                # Only log text encoder LR if it's being trained
+                log_text_lr = ""
+                if len(self.optimizer.param_groups) > 1:
+                    text_lr = self.optimizer.param_groups[1]['lr']
+                    self.writer.add_scalar('Epoch/TextEncoder_LR', text_lr, epoch)
+                    log_text_lr = f", text_lr={text_lr:.2e}"
                 
                 # Log metrics
                 self.logger.info(
                     f"Epoch {epoch}: "
                     f"train_loss={metrics['train_loss']:.4f}, "
                     f"val_loss={metrics['val_loss']:.4f}, "
-                    f"unet_lr={unet_lr:.2e}, "
-                    f"text_lr={text_lr:.2e}"
+                    f"unet_lr={unet_lr:.2e}"
+                    f"{log_text_lr}"
                 )
                 
                 # Check if best model

@@ -99,15 +99,15 @@ class VAETrainer:
         """Initialize the VAE model and text encoder."""
         model_config = self.config['model']
         
-        # Text encoder (now trainable for fine-tuning BERT-large on Pokemon descriptions)
+        # Get fine-tuning strategy from config, default to 'minimal' for memory efficiency
+        finetune_strategy = model_config.get('bert_finetune_strategy', 'minimal')
+        
+        # Text encoder with selective fine-tuning
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
-            hidden_dim=model_config['text_embedding_dim']
+            hidden_dim=model_config['text_embedding_dim'],
+            finetune_strategy=finetune_strategy
         ).to(self.device)
-        
-        # Keep text encoder trainable for domain adaptation
-        for param in self.text_encoder.parameters():
-            param.requires_grad = True
         
         print(f"Text encoder trainable parameters: {sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad):,}")
             
@@ -124,6 +124,10 @@ class VAETrainer:
         text_trainable = sum(p.numel() for p in self.text_encoder.parameters() if p.requires_grad)
         total_trainable = vae_trainable + text_trainable
         self.logger.info(f"Total trainable parameters: VAE={vae_trainable:,}, TextEncoder={text_trainable:,}, Total={total_trainable:,}")
+        
+        # Memory usage estimate
+        memory_gb = (total_trainable * 4 * 3) / (1024**3)  # 4 bytes per param, 3x for gradients/optimizer states
+        self.logger.info(f"Estimated training memory usage: ~{memory_gb:.2f} GB")
         
     def setup_data_loaders(self):
         """Setup data loaders for training, validation, and testing."""
@@ -185,17 +189,26 @@ class VAETrainer:
         self.logger.info(f"Optimizer setup: VAE LR={vae_lr:.2e}, Text Encoder LR={text_lr:.2e}")
         
         # Learning rate scheduler
-        if opt_config['scheduler'] == 'cosine':
+        scheduler_type = opt_config.get('scheduler', 'constant')
+        if scheduler_type == 'cosine':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
                 T_max=self.config['training']['vae_epochs']
             )
-        elif opt_config['scheduler'] == 'step':
+        elif scheduler_type == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
                 step_size=opt_config.get('step_size', 30),
                 gamma=opt_config.get('gamma', 0.1)
             )
+        else:
+            # Default to constant learning rate (no scheduler)
+            self.scheduler = optim.lr_scheduler.LambdaLR(
+                self.optimizer, 
+                lr_lambda=lambda epoch: 1.0
+            )
+        
+        self.logger.info(f"Scheduler: {scheduler_type}")
         
         # Loss function with perceptual loss
         self.criterion = CombinedLoss(

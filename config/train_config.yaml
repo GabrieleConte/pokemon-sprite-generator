@@ -1,74 +1,67 @@
-# Optimized Configuration for Pokemon Sprite Generator
-# C# Optimization (tuned for stability and fine-tuning pre-trained model)
+# Memory-efficient debug configuration for quick experimentation
+# Minimal BERT fine-tuning for reduced memory usage
 
 # Experiment settings
 experiment_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments"
 
-# Model configuration
+# Model configuration - Memory optimized
 model:
-  # Text encoder - using BERT-base for 768-dimensional embeddings
   bert_model: "google-bert/bert-base-uncased"
-  text_embedding_dim: 768     # BERT-base hidden dimension
-  
-  # VAE/Latent space
-  latent_dim: 8  # 8 channels for 27x27 latent space
-  
-  # Pre-trained Stable Diffusion U-Net configuration
-  pretrained_model_name: "runwayml/stable-diffusion-v1-5"  # Use pre-trained SD 1.5
-  cross_attention_dim: 768    # Standard SD cross-attention dimension
-  attention_head_dim: 8       # Reduced for efficiency
-  use_flash_attention: true   # Enable for performance
-  freeze_encoder: true       # Keep encoder trainable for cross-attention
-  freeze_decoder: true       # Keep decoder trainable for cross-attention
-  
-  # Diffusion scheduler parameters
+  text_embedding_dim: 768
+  bert_finetune_strategy: "minimal"  # Only fine-tune last 2 layers + projection (saves ~80% memory)
+  latent_dim: 8
+  pretrained_model_name: "runwayml/stable-diffusion-v1-5"
+  cross_attention_dim: 768
+  attention_head_dim: 8
+  use_flash_attention: true
+  freeze_encoder: true
+  freeze_decoder: true
   num_timesteps: 1000
   beta_start: 0.0001
   beta_end: 0.02
 
-# Data configuration
+# Data configuration - Optimized for speed and memory
 data:
   csv_path: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
   image_dir: "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
-  batch_size: 6               # Reduced to prevent memory swapping
+  batch_size: 8               # Reduced batch size for memory efficiency
   image_size: 215
-  num_workers: 4              # Reduced to save memory
-  pin_memory: false           # Disabled for MPS compatibility
+  num_workers: 4              # Reduced workers to save memory
+  pin_memory: true
   val_split: 0.15
   test_split: 0.05
 
-# Training configuration
+# Training configuration - Ultra fast
 training:
-  # Stage-specific epochs (optimized for fine-tuning)
-  vae_epochs: 50              # Keep VAE training the same
-  diffusion_epochs: 50        # Reduced for fine-tuning (was 400)
-  final_epochs: 30            # Reduced from 60
+  vae_epochs: 50              # Very short for debugging
+  diffusion_epochs: 50
+  final_epochs: 20
   
-  # VAE KL annealing (proven effective settings)
+  # Fast KL annealing
   kl_anneal_start: 0
-  kl_anneal_end: 15           # Faster annealing
+  kl_anneal_end: 3            # Very fast annealing
   kl_weight_start: 0.0
-  kl_weight_end: 0.1          # Lower final weight for better generation
-  free_bits: 0.5              # Prevents posterior collapse
+  kl_weight_end: 0.01         # Very low KL weight
+  free_bits: 0.1              # Minimal free bits
   
-  # Logging and checkpoints (more frequent for debugging)
-  log_every: 20
-  save_every: 10
-  sample_every: 5
+  # Minimal loss weights for speed
+  reconstruction_weight: 1.0
+  perceptual_weight: 0.01     # Minimal perceptual loss for speed
+  kl_weight: 0.001            # Minimal KL weight
+  
+  # More frequent logging for debugging
+  log_every: 5
+  save_every: 20
+  sample_every: 15
 
-# Optimization (tuned for stability and fine-tuning pre-trained models with BERT-large)
+# Optimization - Memory efficient
 optimization:
   optimizer: "adamw"
-  learning_rate: 0.0002        # Conservative rate for U-Net fine-tuning
-  text_encoder_lr: 0.00005     # Very conservative rate for BERT-large fine-tuning
-  weight_decay: 0.01           # Moderate regularization
-  
-  # Training stability and memory optimization
-  max_grad_norm: 1.0           # More permissive gradient clipping (was 0.5)
-  use_mixed_precision: false   # Disable for MPS stability
-  
-  # Scheduler (disabled for stable training)
-  scheduler: "constant"         # Use constant LR instead of cosineoptimized for diffusers-based training
-  
-# Device
+  learning_rate: 0.0003       # Slightly higher for faster convergence
+  text_encoder_lr: 0.0001     # Higher text encoder LR (can be higher since we're only training 2 layers)
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  use_mixed_precision: false  # Keep false for MPS stability
+  scheduler: "constant"
+
 device: "mps"
