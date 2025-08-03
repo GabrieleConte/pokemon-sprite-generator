@@ -13,6 +13,9 @@ from PIL import Image
 from pathlib import Path
 from typing import Optional, Union, List
 import warnings
+from huggingface_hub import hf_hub_download, snapshot_download
+import json
+import yaml
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
@@ -26,6 +29,133 @@ from src.models.diffusers_unet import DiffusersUNet
 from src.models.unet import UNet
 from src.training.vae_trainer import load_config
 from src.utils import get_device
+
+
+def download_models_from_hf(cache_dir: str = "./models_cache"):
+    """
+    Download models from Hugging Face Hub and return local paths.
+    
+    Args:
+        cache_dir: Local directory to cache downloaded models
+        
+    Returns:
+        Dictionary with paths to downloaded models
+    """
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(exist_ok=True)
+    
+    print("📦 Downloading models from Hugging Face Hub...")
+    
+    # Download VAE model
+    print("🔄 Downloading VAE model (GabrieleConte/PokemonVAE)...")
+    try:
+        # Try different common filenames for PyTorch models (prioritize known filename)
+        possible_vae_files = ["vae_best_model.pth", "pytorch_model.bin", "model.pth", "pytorch_model.safetensors"]
+        vae_path = None
+        
+        for filename in possible_vae_files:
+            try:
+                vae_path = hf_hub_download(
+                    repo_id="GabrieleConte/PokemonVAE",
+                    filename=filename,
+                    cache_dir=cache_dir,
+                    local_dir=cache_path / "vae",
+                    local_dir_use_symlinks=False
+                )
+                print(f"✅ VAE downloaded: {filename}")
+                break
+            except Exception:
+                continue
+                
+        if not vae_path:
+            raise Exception("No valid VAE model file found in repository")
+            
+    except Exception as e:
+        print(f"❌ Failed to download VAE: {e}")
+        # Fallback to local file if available
+        local_paths = [
+            "./logs/vae_best_model.pth",
+            "./logs/v9/vae_best_model.pth"
+        ]
+        vae_path = None
+        for local_path in local_paths:
+            if os.path.exists(local_path):
+                vae_path = local_path
+                print(f"✅ Using local VAE: {local_path}")
+                break
+    
+    # Download U-Net model
+    print("🔄 Downloading U-Net model (GabrieleConte/PokemonU-Net)...")
+    try:
+        # Try different common filenames for PyTorch models (prioritize known filename)
+        possible_unet_files = ["diffusion_best_model.pth", "pytorch_model.bin", "model.pth", "pytorch_model.safetensors"]
+        unet_path = None
+        
+        for filename in possible_unet_files:
+            try:
+                unet_path = hf_hub_download(
+                    repo_id="GabrieleConte/PokemonU-Net",
+                    filename=filename,
+                    cache_dir=cache_dir,
+                    local_dir=cache_path / "unet",
+                    local_dir_use_symlinks=False
+                )
+                print(f"✅ U-Net downloaded: {filename}")
+                break
+            except Exception:
+                continue
+                
+        if not unet_path:
+            raise Exception("No valid U-Net model file found in repository")
+            
+    except Exception as e:
+        print(f"❌ Failed to download U-Net: {e}")
+        # Fallback to local file if available
+        local_paths = [
+            "./experiments/pokemon_3stage_diffusion/checkpoints/diffusion_best_model.pth",
+            "./experiments/pokemon_stable_fixed_diffusers/checkpoints/diffusion_best_model.pth",
+            "./logs/v9/diffusion_best_model.pth"
+        ]
+        unet_path = None
+        for local_path in local_paths:
+            if os.path.exists(local_path):
+                unet_path = local_path
+                print(f"✅ Using local U-Net: {local_path}")
+                break
+    
+    # Download or use local config
+    config_path = "./config/train_config.yaml"
+    if not os.path.exists(config_path):
+        print("⚠️ Local config not found, using default configuration")
+        # Create a default config if local one doesn't exist
+        default_config = {
+            'model': {
+                'bert_model': 'google-bert/bert-base-uncased',
+                'text_embedding_dim': 768,
+                'bert_finetune_strategy': 'minimal',
+                'latent_dim': 8,
+                'pretrained_model_name': 'runwayml/stable-diffusion-v1-5',
+                'cross_attention_dim': 768,
+                'attention_head_dim': 8,
+                'use_flash_attention': True,
+                'freeze_encoder': True,
+                'freeze_decoder': True,
+                'num_timesteps': 1000,
+                'beta_start': 0.0001,
+                'beta_end': 0.02
+            }
+        }
+        
+        config_cache_path = cache_path / "config.yaml"
+        with open(config_cache_path, 'w') as f:
+            yaml.dump(default_config, f)
+        config_path = str(config_cache_path)
+    
+    return {
+        'vae_path': vae_path,
+        'unet_path': unet_path,
+        'config_path': config_path
+    }
 
 
 class PokemonGradioGenerator:
@@ -338,38 +468,39 @@ class PokemonGradioGenerator:
 def create_gradio_interface():
     """Create and return the Gradio interface."""
     
-    # Define paths (you may need to adjust these)
-    VAE_CHECKPOINT = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/logs/v9/vae_best_model.pth"
-    DIFFUSION_CHECKPOINT = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/logs/v9/diffusion_best_model.pth"
-    CONFIG_PATH = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/config/train_config.yaml"
+    # Download models from Hugging Face
+    print("🚀 Setting up Pokemon Sprite Generator...")
+    model_paths = download_models_from_hf()
     
-    # Check if checkpoints exist
-    missing_files = []
-    if not os.path.exists(VAE_CHECKPOINT):
-        missing_files.append(f"VAE checkpoint: {VAE_CHECKPOINT}")
-    if not os.path.exists(DIFFUSION_CHECKPOINT):
-        missing_files.append(f"Diffusion checkpoint: {DIFFUSION_CHECKPOINT}")
-    if not os.path.exists(CONFIG_PATH):
-        missing_files.append(f"Config file: {CONFIG_PATH}")
+    # Check if all required models are available
+    missing_models = []
+    if not model_paths['vae_path'] or not os.path.exists(model_paths['vae_path']):
+        missing_models.append("VAE model")
+    if not model_paths['unet_path'] or not os.path.exists(model_paths['unet_path']):
+        missing_models.append("U-Net model")
+    if not model_paths['config_path'] or not os.path.exists(model_paths['config_path']):
+        missing_models.append("Configuration file")
     
-    if missing_files:
-        print("❌ Missing required files:")
-        for file in missing_files:
-            print(f"  - {file}")
-        print("\nPlease ensure all model checkpoints are available.")
+    if missing_models:
+        print("❌ Failed to obtain required models:")
+        for model in missing_models:
+            print(f"  - {model}")
+        print("\nPlease check your internet connection or ensure local checkpoints are available.")
         return None
     
     # Initialize generator
     print("🔄 Initializing Pokemon Generator...")
     try:
         generator = PokemonGradioGenerator(
-            vae_checkpoint_path=VAE_CHECKPOINT,
-            diffusion_checkpoint_path=DIFFUSION_CHECKPOINT,
-            config_path=CONFIG_PATH,
+            vae_checkpoint_path=model_paths['vae_path'],
+            diffusion_checkpoint_path=model_paths['unet_path'],
+            config_path=model_paths['config_path'],
             use_diffusers=True  # Try diffusers first, fallback to custom if needed
         )
     except Exception as e:
         print(f"❌ Failed to initialize generator: {e}")
+        import traceback
+        traceback.print_exc()
         return None
     
     # Define generation functions for Gradio
@@ -412,9 +543,15 @@ def create_gradio_interface():
         gr.Markdown("""
         # 🎮 Pokemon Sprite Generator
         
-        Generate unique Pokemon sprites using AI! Choose between two modes:
+        Generate unique Pokemon sprites using AI! This app uses pre-trained models from Hugging Face:
+        - **VAE Model**: `GabrieleConte/PokemonVAE` 
+        - **U-Net Model**: `GabrieleConte/PokemonU-Net`
+        
+        Choose between two generation modes:
         - **Text-Only**: Generate from scratch using only text descriptions
         - **Image + Text**: Modify existing images with text guidance
+        
+        *Models will be automatically downloaded and cached on first use.*
         """)
         
         with gr.Tabs():
@@ -544,7 +681,7 @@ def main():
     # Launch the app
     print("🌐 Launching Gradio interface...")
     interface.launch(
-        share=False,  # Set to True to create a public link
+        share=True,  # Set to True to create a public link
         server_name="127.0.0.1",
         server_port=7860,
         show_error=True
