@@ -25,12 +25,12 @@ class NoiseScheduler:
     def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
         self.num_timesteps = num_timesteps
         
-        # Linear schedule for betas
+                                   
         self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         
-        # Precompute values for sampling
+                                        
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
         
@@ -75,29 +75,29 @@ class DiffusionTrainer:
         self.vae_checkpoint_path = vae_checkpoint_path
         self.experiment_name = experiment_name
         
-        # Setup device
+                      
         self.device = get_device()
         print(f"Using device: {self.device}")
         
-        # Setup directories
+                           
         self.setup_directories()
         
-        # Setup logging
+                       
         self.setup_logging()
         
-        # Setup models
+                      
         self.setup_models()
         
-        # Setup data loaders
+                            
         self.setup_data_loaders()
         
-        # Setup optimization
+                            
         self.setup_optimization()
         
-        # Setup monitoring
+                          
         self.setup_monitoring()
         
-        # Training state
+                        
         self.current_epoch = 0
         self.global_step = 0
         self.best_val_loss = float('inf')
@@ -128,17 +128,17 @@ class DiffusionTrainer:
         """Initialize models and load pre-trained VAE."""
         model_config = self.config['model']
         
-        # Text encoder (frozen during diffusion training)
+                                                         
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
             hidden_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
-        # Load pre-trained VAE
+                              
         print(f"Loading VAE from {self.vae_checkpoint_path}")
         vae_checkpoint = torch.load(self.vae_checkpoint_path, map_location=self.device)
         
-        # VAE Encoder and Decoder (frozen during diffusion training)
+                                                                    
         self.vae_encoder = VAEEncoder(
             input_channels=3,
             latent_dim=model_config.get('latent_dim', 8)
@@ -150,27 +150,27 @@ class DiffusionTrainer:
             output_channels=3
         ).to(self.device)
         
-        # Load VAE weights from the complete VAE model
+                                                      
         vae_state_dict = vae_checkpoint['vae_state_dict']
         
-        # Extract encoder and decoder state dicts from the complete VAE
+                                                                       
         encoder_state_dict = {}
         decoder_state_dict = {}
         
         for key, value in vae_state_dict.items():
             if key.startswith('encoder.'):
-                encoder_state_dict[key[8:]] = value  # Remove 'encoder.' prefix
+                encoder_state_dict[key[8:]] = value                            
             elif key.startswith('decoder.'):
-                decoder_state_dict[key[8:]] = value  # Remove 'decoder.' prefix
+                decoder_state_dict[key[8:]] = value                            
         
         self.vae_encoder.load_state_dict(encoder_state_dict)
         self.vae_decoder.load_state_dict(decoder_state_dict)
         
-        # Load text encoder weights if available
+                                                
         if 'text_encoder_state_dict' in vae_checkpoint:
             self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
         
-        # Freeze VAE and text encoder
+                                     
         for param in self.vae_encoder.parameters():
             param.requires_grad = False
         for param in self.vae_decoder.parameters():
@@ -178,7 +178,7 @@ class DiffusionTrainer:
         for param in self.text_encoder.parameters():
             param.requires_grad = False
         
-        # U-Net for diffusion denoising
+                                       
         self.unet = UNet(
             latent_dim=model_config.get('latent_dim', 8),
             text_dim=model_config['text_embedding_dim'],
@@ -186,7 +186,7 @@ class DiffusionTrainer:
             num_heads=model_config.get('num_heads', 8)
         ).to(self.device)
         
-        # Noise scheduler
+                         
         self.noise_scheduler = NoiseScheduler(
             num_timesteps=model_config.get('num_timesteps', 1000),
             beta_start=model_config.get('beta_start', 0.0001),
@@ -222,7 +222,7 @@ class DiffusionTrainer:
         """Setup optimizer and learning rate scheduler."""
         opt_config = self.config['optimization']
         
-        # Optimizer (only for U-Net parameters)
+                                               
         if opt_config['optimizer'] == 'adamw':
             self.optimizer = torch.optim.AdamW(
                 self.unet.parameters(),
@@ -238,7 +238,7 @@ class DiffusionTrainer:
                 weight_decay=opt_config['weight_decay']
             )
         
-        # Learning rate scheduler
+                                 
         if opt_config['scheduler'] == 'cosine':
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
@@ -253,12 +253,12 @@ class DiffusionTrainer:
         else:
             self.scheduler = None
         
-        # Loss function (MSE for denoising)
+                                           
         self.criterion = nn.MSELoss()
         
     def setup_monitoring(self):
         """Setup monitoring with TensorBoard."""
-        # TensorBoard
+                     
         self.writer = SummaryWriter(log_dir=self.log_dir)
     
     def train_epoch(self, epoch: int) -> Dict[str, float]:
@@ -277,50 +277,50 @@ class DiffusionTrainer:
             images = batch['image'].to(self.device)
             descriptions = batch['full_description']
             
-            # Encode text
+                         
             with torch.no_grad():
                 text_emb = self.text_encoder(descriptions)
             
-            # Encode images to latent space
+                                           
             with torch.no_grad():
                 latent, mu, logvar = self.vae_encoder(images)
             
-            # Sample random timesteps
+                                     
             timesteps = torch.randint(
                 0, self.noise_scheduler.num_timesteps, 
                 (images.shape[0],), 
                 device=self.device
             )
             
-            # Add noise to latents
+                                  
             noise = torch.randn_like(latent)
             noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
             
-            # Predict noise with U-Net
+                                      
             self.optimizer.zero_grad()
             predicted_noise = self.unet(noisy_latent, timesteps, text_emb)
             
-            # Compute loss (predict the noise)
+                                              
             loss = self.criterion(predicted_noise, noise)
             
-            # Backward pass
+                           
             loss.backward()
             
-            # Gradient clipping to prevent exploding gradients
+                                                              
             max_grad_norm = self.config['optimization'].get('max_grad_norm', 1.0)
             torch.nn.utils.clip_grad_norm_(self.unet.parameters(), max_norm=max_grad_norm)
             
             self.optimizer.step()
             
-            # Update metrics
+                            
             total_loss += loss.item()
             num_batches += 1
             self.global_step += 1
             
-            # Update progress bar
+                                 
             pbar.set_postfix({'loss': loss.item()})
             
-            # Log to TensorBoard
+                                
             if batch_idx % self.config['training']['log_every'] == 0:
                 self.writer.add_scalar('Diffusion Train/Loss', loss.item(), self.global_step)
                 self.writer.add_scalar('Diffusion Train/Learning_Rate', self.optimizer.param_groups[0]['lr'], self.global_step)
@@ -343,27 +343,27 @@ class DiffusionTrainer:
                 images = batch['image'].to(self.device)
                 descriptions = batch['full_description']
                 
-                # Encode text
+                             
                 text_emb = self.text_encoder(descriptions)
                 
-                # Encode images to latent space
+                                               
                 latent, mu, logvar = self.vae_encoder(images)
                 
-                # Sample random timesteps
+                                         
                 timesteps = torch.randint(
                     0, self.noise_scheduler.num_timesteps, 
                     (images.shape[0],), 
                     device=self.device
                 )
                 
-                # Add noise to latents
+                                      
                 noise = torch.randn_like(latent)
                 noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
                 
-                # Predict noise with U-Net
+                                          
                 predicted_noise = self.unet(noisy_latent, timesteps, text_emb)
                 
-                # Compute loss
+                              
                 loss = self.criterion(predicted_noise, noise)
                 
                 total_loss += loss.item()
@@ -371,7 +371,7 @@ class DiffusionTrainer:
         
         avg_loss = total_loss / num_batches
         
-        # Log to TensorBoard
+                            
         self.writer.add_scalar('Diffusion Val/Loss', avg_loss, epoch)
         
         return {'val_loss': avg_loss}
@@ -388,51 +388,51 @@ class DiffusionTrainer:
         Returns:
             Generated latent vectors [batch_size, latent_dim, 27, 27]
         """
-        # Start from pure noise
+                               
         latent_shape = (num_samples, self.config['model'].get('latent_dim', 8), 27, 27)
         x_t = torch.randn(latent_shape, device=self.device)
         
-        # Ensure noise scheduler is on correct device
+                                                     
         self.noise_scheduler.to(self.device)
         
-        # Use fewer steps during training for speed
+                                                   
         if fast_sampling:
-            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))  # Every 50th step
+            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))                   
         else:
             timesteps_to_use = list(range(self.noise_scheduler.num_timesteps))
         
-        # Reverse diffusion process
+                                   
         for t in reversed(timesteps_to_use):
-            # Create timestep tensor
+                                    
             timesteps = torch.full((num_samples,), t, device=self.device, dtype=torch.long)
             
-            # Predict noise
+                           
             with torch.no_grad():
                 predicted_noise = self.unet(x_t, timesteps, text_emb)
             
-            # Get coefficients
+                              
             alpha_t = self.noise_scheduler.alphas[t]
             alpha_cumprod_t = self.noise_scheduler.alphas_cumprod[t]
             beta_t = self.noise_scheduler.betas[t]
             
-            # Compute mean of q(x_{t-1} | x_t, x_0)
+                                                   
             if t > 0:
                 alpha_cumprod_t_prev = self.noise_scheduler.alphas_cumprod[t-1]
             else:
                 alpha_cumprod_t_prev = torch.tensor(1.0, device=self.device)
             
-            # DDPM formula
+                          
             coeff1 = 1.0 / torch.sqrt(alpha_t)
             coeff2 = beta_t / torch.sqrt(1 - alpha_cumprod_t)
             
             x_t = coeff1 * (x_t - coeff2 * predicted_noise)
             
-            # Add noise (except for last step)
-            if t > 0 and not fast_sampling:  # Skip noise in fast sampling except for larger steps
+                                              
+            if t > 0 and not fast_sampling:                                                       
                 noise = torch.randn_like(x_t)
                 sigma_t = torch.sqrt(beta_t)
                 x_t = x_t + sigma_t * noise
-            elif t > 0 and fast_sampling and t % 50 == 0:  # Add noise only at larger intervals
+            elif t > 0 and fast_sampling and t % 50 == 0:                                      
                 noise = torch.randn_like(x_t)
                 sigma_t = torch.sqrt(beta_t)
                 x_t = x_t + sigma_t * noise
@@ -445,16 +445,16 @@ class DiffusionTrainer:
         self.vae_decoder.eval()
         self.text_encoder.eval()
         
-        # Sample descriptions from validation set
+                                                 
         val_batch = next(iter(self.data_loaders['val']))
         sample_descriptions = val_batch['full_description'][:num_samples]
         
         with torch.no_grad():
-            # Encode text
+                         
             text_emb = self.text_encoder(sample_descriptions)
             
-            # Generate in smaller batches to avoid memory issues
-            batch_size = min(4, num_samples)  # Generate max 4 at a time
+                                                                
+            batch_size = min(4, num_samples)                            
             all_generated_images = []
             
             for i in range(0, num_samples, batch_size):
@@ -462,25 +462,25 @@ class DiffusionTrainer:
                 batch_text_emb = text_emb[i:batch_end]
                 batch_descriptions = sample_descriptions[i:batch_end]
                 
-                # Generate latent vectors using DDPM sampling
+                                                             
                 generated_latents = self.ddpm_sample(batch_text_emb, batch_end - i)
                 
-                # Decode to images
+                                  
                 generated_images = self.vae_decoder(generated_latents, batch_text_emb)
                 
-                # Denormalize and clamp
+                                       
                 generated_images = (generated_images + 1.0) / 2.0
                 generated_images = torch.clamp(generated_images, 0, 1)
                 
                 all_generated_images.append(generated_images)
                 
-                # Save individual samples
+                                         
                 for j, (img, desc) in enumerate(zip(generated_images, batch_descriptions)):
                     sample_idx = i + j
                     img_pil = transforms.ToPILImage()(img.cpu())
                     img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{sample_idx}.png")
                     
-                    # Log to TensorBoard
+                                        
                     self.writer.add_image(f'Diffusion Generated/Sample_{sample_idx}', img.cpu(), epoch)
                 
         self.logger.info(f"Generated {num_samples} samples for epoch {epoch}")
@@ -498,23 +498,23 @@ class DiffusionTrainer:
             'config': self.config
         }
         
-        # Save regular checkpoint
-        # checkpoint_path = self.checkpoint_dir / f"diffusion_epoch_{epoch}.pth"
-        # torch.save(checkpoint, checkpoint_path)
+                                 
+                                                                                
+                                                 
         
-        # Save best checkpoint
+                              
         if is_best:
             best_path = self.checkpoint_dir / "diffusion_best_model.pth"
             torch.save(checkpoint, best_path)
             self.logger.info(f"New best model saved at epoch {epoch}")
             
-        # checkpoints = list(self.checkpoint_dir.glob('diffusion_epoch_*.pth'))
-        # if len(checkpoints) > 2:
-        #     checkpoints.sort()
-        #     for old_checkpoint in checkpoints[:-2]:
-        #         old_checkpoint.unlink()
+                                                                               
+                                  
+                                
+                                                     
+                                         
         
-        # self.logger.info(f"Checkpoint saved: {checkpoint_path}")
+                                                                  
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load training checkpoint."""
@@ -539,21 +539,21 @@ class DiffusionTrainer:
         for epoch in range(self.current_epoch, self.config['training']['diffusion_epochs']):
             self.current_epoch = epoch
             
-            # Training epoch
+                            
             train_metrics = self.train_epoch(epoch)
             
-            # Validation epoch
+                              
             val_metrics = self.validate_epoch(epoch)
             
-            # Learning rate scheduling
+                                      
             if self.scheduler:
                 self.scheduler.step()
             
-            # Generate samples
+                              
             if epoch % self.config['training']['sample_every'] == 0:
                 self.generate_samples(epoch)
             
-            # Save checkpoint
+                             
             is_best = val_metrics['val_loss'] < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_metrics['val_loss']
@@ -561,13 +561,13 @@ class DiffusionTrainer:
             if epoch % self.config['training']['save_every'] == 0:
                 self.save_checkpoint(epoch, is_best)
             
-            # Logging
+                     
             self.logger.info(f"Epoch {epoch}: train_loss={train_metrics['train_loss']:.4f}, "
                            f"val_loss={val_metrics['val_loss']:.4f}")
         
         self.logger.info("Diffusion training completed!")
         
-        # Close monitoring
+                          
         self.writer.close()
 
 
@@ -579,7 +579,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Example usage
+                   
     config_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/config/train_config.yaml"
     config = load_config(config_path)
     

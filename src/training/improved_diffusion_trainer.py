@@ -25,23 +25,23 @@ class NoiseScheduler:
     def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
         self.num_timesteps = num_timesteps
         
-        # Cosine schedule for better training stability
+                                                       
         self.betas = self._cosine_beta_schedule(num_timesteps, beta_start, beta_end).float()
         self.alphas = (1.0 - self.betas).float()
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0).float()
         
-        # Precompute values for sampling with numerical stability
+                                                                 
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod).float()
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod).float()
         
-        # Clamp to prevent numerical issues
+                                           
         self.sqrt_alphas_cumprod = torch.clamp(self.sqrt_alphas_cumprod, min=1e-8)
         self.sqrt_one_minus_alphas_cumprod = torch.clamp(self.sqrt_one_minus_alphas_cumprod, min=1e-8)
         
     def _cosine_beta_schedule(self, timesteps, beta_start, beta_end, s=0.008):
         """Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ"""
         steps = timesteps + 1
-        x = torch.linspace(0, timesteps, steps, dtype=torch.float32)  # Use float32 instead of float64
+        x = torch.linspace(0, timesteps, steps, dtype=torch.float32)                                  
         alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
@@ -57,10 +57,10 @@ class NoiseScheduler:
         
         noisy = sqrt_alpha_cumprod * x_0 + sqrt_one_minus_alpha_cumprod * noise
         
-        # Check for NaN/Inf and handle
+                                      
         if torch.isnan(noisy).any() or torch.isinf(noisy).any():
             print("Warning: NaN/Inf detected in noise addition, using fallback")
-            return x_0 + 0.1 * noise  # Simple fallback
+            return x_0 + 0.1 * noise                   
             
         return noisy
     
@@ -95,32 +95,32 @@ class ImprovedDiffusionTrainer:
         self.vae_checkpoint_path = vae_checkpoint_path
         self.experiment_name = experiment_name
         
-        # Setup device
+                      
         self.device = get_device()
         print(f"Using device: {self.device}")
         
-        # Setup directories
+                           
         self.setup_directories()
         
-        # Setup logging
+                       
         self.setup_logging()
         
-        # Setup models
+                      
         self.setup_models()
         
-        # Setup data loaders
+                            
         self.setup_data_loaders()
         
-        # Setup optimization
+                            
         self.setup_optimization()
         
-        # Setup scheduler (after data loaders are ready)
+                                                        
         self.setup_scheduler()
         
-        # Setup monitoring
+                          
         self.setup_monitoring()
         
-        # Training state
+                        
         self.current_epoch = 0
         self.global_step = 0
         self.best_val_loss = float('inf')
@@ -151,17 +151,17 @@ class ImprovedDiffusionTrainer:
         """Initialize models and load pre-trained VAE."""
         model_config = self.config['model']
         
-        # Text encoder (frozen during diffusion training)
+                                                         
         self.text_encoder = TextEncoder(
             model_name=model_config['bert_model'],
             hidden_dim=model_config['text_embedding_dim']
         ).to(self.device)
         
-        # Load pre-trained VAE
+                              
         print(f"Loading VAE from {self.vae_checkpoint_path}")
         vae_checkpoint = torch.load(self.vae_checkpoint_path, map_location=self.device)
         
-        # VAE Encoder and Decoder (frozen during diffusion training)
+                                                                    
         self.vae_encoder = VAEEncoder(
             input_channels=3,
             latent_dim=model_config.get('latent_dim', 8)
@@ -173,28 +173,28 @@ class ImprovedDiffusionTrainer:
             output_channels=3
         ).to(self.device)
         
-        # Load VAE weights properly
+                                   
         if 'vae_state_dict' in vae_checkpoint:
             vae_state_dict = vae_checkpoint['vae_state_dict']
             
-            # Extract encoder and decoder state dicts
+                                                     
             encoder_state_dict = {}
             decoder_state_dict = {}
             
             for key, value in vae_state_dict.items():
                 if key.startswith('encoder.'):
-                    encoder_state_dict[key[8:]] = value  # Remove 'encoder.' prefix
+                    encoder_state_dict[key[8:]] = value                            
                 elif key.startswith('decoder.'):
-                    decoder_state_dict[key[8:]] = value  # Remove 'decoder.' prefix
+                    decoder_state_dict[key[8:]] = value                            
             
             self.vae_encoder.load_state_dict(encoder_state_dict, strict=False)
             self.vae_decoder.load_state_dict(decoder_state_dict, strict=False)
         
-        # Load text encoder weights if available
+                                                
         if 'text_encoder_state_dict' in vae_checkpoint:
             self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'], strict=False)
         
-        # Freeze VAE and text encoder
+                                     
         for param in self.vae_encoder.parameters():
             param.requires_grad = False
         for param in self.vae_decoder.parameters():
@@ -202,20 +202,20 @@ class ImprovedDiffusionTrainer:
         for param in self.text_encoder.parameters():
             param.requires_grad = False
         
-        # Set to eval mode
+                          
         self.vae_encoder.eval()
         self.vae_decoder.eval()
         self.text_encoder.eval()
         
-        # U-Net for diffusion denoising
+                                       
         self.unet = UNet(
             latent_dim=model_config.get('latent_dim', 8),
             text_dim=model_config['text_embedding_dim'],
             time_emb_dim=model_config.get('time_emb_dim', 128),
-            num_heads=model_config.get('num_heads', 4)  # Reduced for stability
+            num_heads=model_config.get('num_heads', 4)                         
         ).to(self.device)
 
-        # Noise scheduler
+                         
         self.noise_scheduler = NoiseScheduler(
             num_timesteps=model_config.get('num_timesteps', 1000),
             beta_start=model_config.get('beta_start', 0.0001),
@@ -228,7 +228,7 @@ class ImprovedDiffusionTrainer:
         """Setup data loaders for training, validation, and testing."""
         data_config = self.config['data']
         
-        # Use U-Net specific batch size if available
+                                                    
         unet_config = self.config.get('unet_optimization', {})
         batch_size = unet_config.get('batch_size', data_config['batch_size'])
         num_workers = unet_config.get('num_workers', data_config['num_workers'])
@@ -236,11 +236,11 @@ class ImprovedDiffusionTrainer:
         train_loader, val_loader, test_loader = create_data_loaders(
             csv_path=data_config['csv_path'],
             image_dir=data_config['image_dir'],
-            batch_size=batch_size,  # Use U-Net specific batch size
+            batch_size=batch_size,                                 
             val_split=data_config['val_split'],
             test_split=data_config['test_split'],
             image_size=data_config['image_size'],
-            num_workers=num_workers,  # Use U-Net specific num_workers
+            num_workers=num_workers,                                  
             pin_memory=data_config['pin_memory']
         )
         
@@ -255,11 +255,11 @@ class ImprovedDiffusionTrainer:
         
     def setup_optimization(self):
         """Setup optimizer and learning rate scheduler using U-Net specific config."""
-        # Use U-Net specific optimization config if available, fallback to general config
+                                                                                         
         unet_config = self.config.get('unet_optimization', {})
         opt_config = self.config['optimization']
         
-        # Get U-Net specific parameters with fallbacks
+                                                      
         optimizer_type = unet_config.get('optimizer', opt_config['optimizer'])
         lr = unet_config.get('learning_rate', opt_config['learning_rate'])
         beta1 = unet_config.get('beta1', opt_config['beta1'])
@@ -269,17 +269,17 @@ class ImprovedDiffusionTrainer:
         
         self.logger.info(f"Using U-Net optimization: {optimizer_type}, lr={lr}, wd={weight_decay}, clip={max_grad_norm}")
         
-        # Store gradient clipping norm for use in training
+                                                          
         self.max_grad_norm = max_grad_norm
         
-        # Optimizer (only for U-Net parameters)
+                                               
         if optimizer_type == 'adamw':
             self.optimizer = torch.optim.AdamW(
                 self.unet.parameters(),
                 lr=lr,
                 betas=(beta1, beta2),
                 weight_decay=weight_decay,
-                eps=1e-6  # Smaller eps for stability
+                eps=1e-6                             
             )
         else:
             self.optimizer = torch.optim.Adam(
@@ -287,17 +287,17 @@ class ImprovedDiffusionTrainer:
                 lr=lr,
                 betas=(beta1, beta2),
                 weight_decay=weight_decay,
-                eps=1e-6  # Smaller eps for stability
+                eps=1e-6                             
             )
         
-        # Store scheduler config for later setup (after data loaders are ready)
+                                                                               
         self.scheduler_config = {
             'type': unet_config.get('scheduler', opt_config.get('scheduler', 'cosine')),
             'lr': lr
         }
         
-        # Improved loss function with Huber loss for stability
-        self.criterion = nn.SmoothL1Loss(beta=0.1)  # More stable than MSE
+                                                              
+        self.criterion = nn.SmoothL1Loss(beta=0.1)                        
         
     def setup_scheduler(self):
         """Setup learning rate scheduler after data loaders are ready."""
@@ -305,20 +305,20 @@ class ImprovedDiffusionTrainer:
         lr = self.scheduler_config['lr']
         
         if scheduler_type == 'cosine':
-            # Calculate correct total steps based on actual data loader size
-            # This is critical for OneCycleLR to work properly
+                                                                            
+                                                              
             total_steps = self.config['training']['diffusion_epochs'] * len(self.data_loaders['train'])
             self.logger.info(f"OneCycleLR total_steps: {total_steps} (epochs: {self.config['training']['diffusion_epochs']}, batches_per_epoch: {len(self.data_loaders['train'])})")
             
             self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 self.optimizer,
                 max_lr=lr,
-                total_steps=total_steps,  # Use actual total steps
-                pct_start=0.1,  # 10% warmup
+                total_steps=total_steps,                          
+                pct_start=0.1,              
                 anneal_strategy='cos'
             )
         else:
-            # Fallback to constant LR
+                                     
             self.scheduler = torch.optim.lr_scheduler.ConstantLR(self.optimizer, factor=1.0)
         
     def setup_monitoring(self):
@@ -347,36 +347,36 @@ class ImprovedDiffusionTrainer:
                 images = batch['image'].to(self.device)
                 descriptions = batch['full_description']
                 
-                # Encode text
+                             
                 with torch.no_grad():
                     text_emb = self.text_encoder(descriptions)
                     if self.check_for_nans(text_emb, "text_emb"):
                         continue
                 
-                # Encode images to latent space
+                                               
                 with torch.no_grad():
                     latent, mu, logvar = self.vae_encoder(images)
                     if self.check_for_nans(latent, "latent"):
                         continue
                 
-                # Normalize latent to reasonable range
+                                                      
                 latent = torch.clamp(latent, -3.0, 3.0)
                 
-                # Sample random timesteps
+                                         
                 timesteps = torch.randint(
                     0, self.noise_scheduler.num_timesteps, 
                     (images.shape[0],), 
                     device=self.device
                 )
                 
-                # Add noise to latents - use standard noise scale
-                noise = torch.randn_like(latent)  # Normal noise scale for proper diffusion
+                                                                 
+                noise = torch.randn_like(latent)                                           
                 noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
                 
                 if self.check_for_nans(noisy_latent, "noisy_latent"):
                     continue
                 
-                # Predict noise with U-Net
+                                          
                 self.optimizer.zero_grad()
                 predicted_noise = self.unet(noisy_latent, timesteps, text_emb)
                 
@@ -384,7 +384,7 @@ class ImprovedDiffusionTrainer:
                     nan_count += 1
                     continue
                 
-                # Compute loss (predict the noise)
+                                                  
                 loss = self.criterion(predicted_noise, noise)
                 
                 if torch.isnan(loss) or torch.isinf(loss):
@@ -392,10 +392,10 @@ class ImprovedDiffusionTrainer:
                     nan_count += 1
                     continue
                 
-                # Backward pass with gradient scaling
+                                                     
                 loss.backward()
                 
-                # Check for gradient explosion
+                                              
                 total_norm = 0
                 for p in self.unet.parameters():
                     if p.grad is not None:
@@ -403,28 +403,28 @@ class ImprovedDiffusionTrainer:
                         total_norm += param_norm.item() ** 2
                 total_norm = total_norm ** (1. / 2)
                 
-                if total_norm > self.max_grad_norm * 2:  # Gradient explosion threshold
+                if total_norm > self.max_grad_norm * 2:                                
                     self.logger.warning(f"Large gradient norm: {total_norm:.3f}, clipping to {self.max_grad_norm}")
                 
-                # Gradient clipping using U-Net specific parameter
+                                                                  
                 torch.nn.utils.clip_grad_norm_(self.unet.parameters(), max_norm=self.max_grad_norm)
                 
                 self.optimizer.step()
                 self.scheduler.step()
                 
-                # Update metrics
+                                
                 total_loss += loss.item()
                 num_batches += 1
                 self.global_step += 1
                 
-                # Update progress bar
+                                     
                 pbar.set_postfix({
                     'loss': loss.item(),
                     'lr': f"{self.optimizer.param_groups[0]['lr']:.2e}",
                     'nans': nan_count
                 })
                 
-                # Log to TensorBoard
+                                    
                 if batch_idx % self.config['training']['log_every'] == 0:
                     self.writer.add_scalar('Diffusion Train/Loss', loss.item(), self.global_step)
                     self.writer.add_scalar('Diffusion Train/Learning_Rate', self.optimizer.param_groups[0]['lr'], self.global_step)
@@ -457,32 +457,32 @@ class ImprovedDiffusionTrainer:
                     images = batch['image'].to(self.device)
                     descriptions = batch['full_description']
                     
-                    # Encode text
+                                 
                     text_emb = self.text_encoder(descriptions)
                     
-                    # Encode images to latent space
+                                                   
                     latent, mu, logvar = self.vae_encoder(images)
                     latent = torch.clamp(latent, -3.0, 3.0)
                     
-                    # Sample random timesteps
+                                             
                     timesteps = torch.randint(
                         0, self.noise_scheduler.num_timesteps, 
                         (images.shape[0],), 
                         device=self.device
                     )
                     
-                    # Add noise to latents - use standard noise scale for validation too
+                                                                                        
                     noise = torch.randn_like(latent)
                     noisy_latent = self.noise_scheduler.add_noise(latent, noise, timesteps)
                     
-                    # Predict noise with U-Net
+                                              
                     predicted_noise = self.unet(noisy_latent, timesteps, text_emb)
                     
-                    # Check for NaN
+                                   
                     if self.check_for_nans(predicted_noise, "val_predicted_noise"):
                         continue
                     
-                    # Compute loss
+                                  
                     loss = self.criterion(predicted_noise, noise)
                     
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -500,7 +500,7 @@ class ImprovedDiffusionTrainer:
             
         avg_loss = total_loss / num_batches
         
-        # Log to TensorBoard
+                            
         self.writer.add_scalar('Diffusion Val/Loss', avg_loss, epoch)
         
         return {'val_loss': avg_loss}
@@ -517,51 +517,51 @@ class ImprovedDiffusionTrainer:
         Returns:
             Generated latent vectors [batch_size, latent_dim, 27, 27]
         """
-        # Start from pure noise
+                               
         latent_shape = (num_samples, self.config['model'].get('latent_dim', 8), 27, 27)
         x_t = torch.randn(latent_shape, device=self.device)
         
-        # Ensure noise scheduler is on correct device
+                                                     
         self.noise_scheduler.to(self.device)
         
-        # Use fewer steps during training for speed
+                                                   
         if fast_sampling:
-            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))  # Every 50th step
+            timesteps_to_use = list(range(0, self.noise_scheduler.num_timesteps, 50))                   
         else:
             timesteps_to_use = list(range(self.noise_scheduler.num_timesteps))
         
-        # Reverse diffusion process
+                                   
         for t in reversed(timesteps_to_use):
-            # Create timestep tensor
+                                    
             timesteps = torch.full((num_samples,), t, device=self.device, dtype=torch.long)
             
-            # Predict noise
+                           
             with torch.no_grad():
                 predicted_noise = self.unet(x_t, timesteps, text_emb)
             
-            # Get coefficients
+                              
             alpha_t = self.noise_scheduler.alphas[t]
             alpha_cumprod_t = self.noise_scheduler.alphas_cumprod[t]
             beta_t = self.noise_scheduler.betas[t]
             
-            # Compute mean of q(x_{t-1} | x_t, x_0)
+                                                   
             if t > 0:
                 alpha_cumprod_t_prev = self.noise_scheduler.alphas_cumprod[t-1]
             else:
                 alpha_cumprod_t_prev = torch.tensor(1.0, device=self.device)
             
-            # DDPM formula
+                          
             coeff1 = 1.0 / torch.sqrt(alpha_t)
             coeff2 = beta_t / torch.sqrt(1 - alpha_cumprod_t)
             
             x_t = coeff1 * (x_t - coeff2 * predicted_noise)
             
-            # Add noise (except for last step)
-            if t > 0 and not fast_sampling:  # Skip noise in fast sampling except for larger steps
+                                              
+            if t > 0 and not fast_sampling:                                                       
                 noise = torch.randn_like(x_t)
                 sigma_t = torch.sqrt(beta_t)
                 x_t = x_t + sigma_t * noise
-            elif t > 0 and fast_sampling and t % 50 == 0:  # Add noise only at larger intervals
+            elif t > 0 and fast_sampling and t % 50 == 0:                                      
                 noise = torch.randn_like(x_t)
                 sigma_t = torch.sqrt(beta_t)
                 x_t = x_t + sigma_t * noise
@@ -574,16 +574,16 @@ class ImprovedDiffusionTrainer:
         self.vae_decoder.eval()
         self.text_encoder.eval()
         
-        # Sample descriptions from validation set
+                                                 
         val_batch = next(iter(self.data_loaders['val']))
         sample_descriptions = val_batch['full_description'][:num_samples]
         
         with torch.no_grad():
-            # Encode text
+                         
             text_emb = self.text_encoder(sample_descriptions)
             
-            # Generate in smaller batches to avoid memory issues
-            batch_size = min(4, num_samples)  # Generate max 4 at a time
+                                                                
+            batch_size = min(4, num_samples)                            
             all_generated_images = []
             
             for i in range(0, num_samples, batch_size):
@@ -591,25 +591,25 @@ class ImprovedDiffusionTrainer:
                 batch_text_emb = text_emb[i:batch_end]
                 batch_descriptions = sample_descriptions[i:batch_end]
                 
-                # Generate latent vectors using DDPM sampling
+                                                             
                 generated_latents = self.ddpm_sample(batch_text_emb, batch_end - i)
                 
-                # Decode to images
+                                  
                 generated_images = self.vae_decoder(generated_latents, batch_text_emb)
                 
-                # Denormalize and clamp
+                                       
                 generated_images = (generated_images + 1.0) / 2.0
                 generated_images = torch.clamp(generated_images, 0, 1)
                 
                 all_generated_images.append(generated_images)
                 
-                # Save individual samples
+                                         
                 for j, (img, desc) in enumerate(zip(generated_images, batch_descriptions)):
                     sample_idx = i + j
                     img_pil = transforms.ToPILImage()(img.cpu())
                     img_pil.save(self.sample_dir / f"epoch_{epoch}_sample_{sample_idx}.png")
                     
-                    # Log to TensorBoard
+                                        
                     self.writer.add_image(f'Diffusion Generated/Sample_{sample_idx}', img.cpu(), epoch)
                 
         self.logger.info(f"Generated {num_samples} samples for epoch {epoch}")
@@ -626,17 +626,17 @@ class ImprovedDiffusionTrainer:
             'config': self.config
         }
         
-        # # Save regular checkpoint
-        # checkpoint_path = self.checkpoint_dir / f"diffusion_epoch_{epoch}.pth"
-        # torch.save(checkpoint, checkpoint_path)
+                                   
+                                                                                
+                                                 
         
-        # Save best checkpoint
+                              
         if is_best:
             best_path = self.checkpoint_dir / "diffusion_best_model.pth"
             torch.save(checkpoint, best_path)
             self.logger.info(f"New best model saved at epoch {epoch}")
             
-        # self.logger.info(f"Checkpoint saved: {checkpoint_path}")
+                                                                  
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load training checkpoint."""
@@ -661,22 +661,22 @@ class ImprovedDiffusionTrainer:
         for epoch in range(self.current_epoch, self.config['training']['diffusion_epochs']):
             self.current_epoch = epoch
             
-            # Training epoch
+                            
             train_metrics = self.train_epoch(epoch)
             
-            # Skip validation if training failed
+                                                
             if train_metrics['train_loss'] == float('inf'):
                 self.logger.error(f"Training failed at epoch {epoch}, stopping")
                 break
             
-            # Validation epoch
+                              
             val_metrics = self.validate_epoch(epoch)
             
-            # Generate samples
+                              
             if epoch % self.config['training']['sample_every'] == 0:
                 self.generate_samples(epoch)
             
-            # Save checkpoint
+                             
             is_best = val_metrics['val_loss'] < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_metrics['val_loss']
@@ -684,7 +684,7 @@ class ImprovedDiffusionTrainer:
             if epoch % self.config['training']['save_every'] == 0 or is_best:
                 self.save_checkpoint(epoch, is_best)
             
-            # Logging
+                     
             self.logger.info(f"Epoch {epoch}: train_loss={train_metrics['train_loss']:.4f}, "
                            f"val_loss={val_metrics['val_loss']:.4f}")
         
@@ -700,7 +700,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Example usage
+                   
     config_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/config/train_config.yaml"
     config = load_config(config_path)
     

@@ -43,16 +43,11 @@ class PokemonDataset(Dataset):
         self.augment = augment
         self.background_color = self._parse_background_color(background_color)
         
-        # Load CSV data - support both original pokemon.csv and text_description_concat.csv
         try:
-            # First try reading as semicolon-separated (text_description_concat.csv format)
             self.data = pd.read_csv(csv_path, sep=';', encoding='utf-8', header=None)
             if len(self.data.columns) == 2:
-                # text_description_concat.csv format
                 self.data.columns = ['english_name', 'description']
-                # Add national_number as index + 1
                 self.data['national_number'] = range(1, len(self.data) + 1)
-                # Reorder columns
                 self.data = self.data[['national_number', 'english_name', 'description']]
             else:
                 # Fall back to tab-separated
@@ -72,24 +67,17 @@ class PokemonDataset(Dataset):
                 except:
                     self.data = pd.read_csv(csv_path, sep='\t', encoding='latin-1')
         
-        # Check if we have the expected columns
         required_columns = ['national_number', 'english_name', 'description']
         missing_columns = [col for col in required_columns if col not in self.data.columns]
         
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}. Available columns: {list(self.data.columns)}")
         
-        # Filter out Pokemon without descriptions
         self.data = self.data.dropna(subset=['description'])
-        
-        # Filter out entries with missing images if requested
         if filter_missing:
             self.data = self._filter_missing_images()
-        
-        # Setup transforms
         self.transform = transform if transform is not None else self._get_default_transform()
         
-        # Setup augmentation transforms
         self.augment_transform = self._get_augmentation_transform() if augment else None
         
         logging.info(f"Loaded {len(self.data)} Pokemon samples from {csv_path}")
@@ -135,15 +123,11 @@ class PokemonDataset(Dataset):
     
     def _load_image_with_background(self, image_path: str) -> Image.Image:
         """Load PNG image and properly handle transparency with consistent background."""
-        # Load the original image
         original_img = Image.open(image_path)
         
-        # If the image has transparency, handle it properly
         if original_img.mode in ('RGBA', 'LA') or (original_img.mode == 'P' and 'transparency' in original_img.info):
-            # Create a background with the specified color
             background = Image.new('RGB', original_img.size, self.background_color)
             
-            # Paste the original image onto the background
             if original_img.mode == 'RGBA':
                 background.paste(original_img, mask=original_img.split()[-1])  # Use alpha channel as mask
             elif original_img.mode == 'LA':
@@ -153,7 +137,6 @@ class PokemonDataset(Dataset):
             
             return background
         else:
-            # If no transparency, just convert to RGB
             return original_img.convert('RGB')
     
     def _get_default_transform(self) -> transforms.Compose:
@@ -197,24 +180,18 @@ class PokemonDataset(Dataset):
         if torch.is_tensor(idx):
             idx = int(idx.item())  # Convert tensor to int
             
-        # Get row data
         row = self.data.iloc[idx]
         
-        # Load and preprocess image with proper background handling
         image_path = self._get_image_path(row['national_number'])
         image = self._load_image_with_background(image_path)
         
-        # Apply augmentation if training
         if self.augment and self.augment_transform is not None:
             image = self.augment_transform(image)
-            
-        # Apply standard transforms
+
         image = self.transform(image)
         
-        # Prepare description text
         description = self._clean_description(row['description'])
         
-        # Create comprehensive text description
         full_description = self._create_full_description(row)
         
         return {
@@ -230,7 +207,6 @@ class PokemonDataset(Dataset):
         if pd.isna(description):
             return ""
         
-        # Remove extra quotes and clean whitespace
         description = str(description).strip()
         if description.startswith('"') and description.endswith('"'):
             description = description[1:-1]
@@ -241,10 +217,8 @@ class PokemonDataset(Dataset):
         """Create a comprehensive description including type and other info."""
         parts = []
         
-        # Add name
         parts.append(f"Pokemon named {row['english_name']}")
         
-        # Add original description which already contains type info in text_description_concat.csv
         description = self._clean_description(row['description'])
         if description:
             parts.append(description)
@@ -277,11 +251,9 @@ def create_data_loaders(csv_path: str,
         background_color: Background color for transparent areas        Returns:
             Tuple with (train_loader, val_loader, test_loader)
     """
-    # Set random seed for reproducible splits
     torch.manual_seed(seed)
     np.random.seed(seed)
     
-    # Create full dataset
     full_dataset = PokemonDataset(
         csv_path=csv_path,
         image_dir=image_dir,
@@ -290,20 +262,17 @@ def create_data_loaders(csv_path: str,
         background_color=background_color
     )
     
-    # Calculate split sizes
     total_size = len(full_dataset)
     test_size = int(total_size * test_split)
     val_size = int(total_size * val_split)
     train_size = total_size - val_size - test_size
     
-    # Create splits
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
         full_dataset, 
         [train_size, val_size, test_size],
         generator=torch.Generator().manual_seed(seed)
     )
     
-    # Create augmented training dataset
     train_augmented_dataset = PokemonDataset(
         csv_path=csv_path,
         image_dir=image_dir,
@@ -312,11 +281,9 @@ def create_data_loaders(csv_path: str,
         background_color=background_color
     )
     
-    # Apply the same indices to the augmented dataset
     train_indices = list(train_dataset.indices)
     train_augmented_dataset.data = train_augmented_dataset.data.iloc[train_indices]
     
-    # Create data loaders
     train_loader = DataLoader(
         train_augmented_dataset,
         batch_size=batch_size,
@@ -363,7 +330,6 @@ def get_dataset_statistics(csv_path: str, image_dir: str, background_color: Unio
     """
     dataset = PokemonDataset(csv_path, image_dir, augment=False, background_color=background_color)
     
-    # Basic stats
     stats = {
         'total_samples': len(dataset),
         'image_dir': image_dir,
@@ -373,7 +339,6 @@ def get_dataset_statistics(csv_path: str, image_dir: str, background_color: Unio
         'missing_descriptions': 0
     }
     
-    # Type distribution
     type_counts = {}
     description_lengths = []
     
@@ -395,7 +360,6 @@ def get_dataset_statistics(csv_path: str, image_dir: str, background_color: Unio
     return stats
 
 if __name__ == "__main__":
-    # Test the dataset
     csv_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/text_description_concat.csv"
     image_dir = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/data/small_images"
     

@@ -33,13 +33,13 @@ class TextEncoder(nn.Module):
         self.tokenizer = BertTokenizer.from_pretrained(model_name)
         self.bert = BertModel.from_pretrained(model_name)
         
-        # Apply selective fine-tuning strategy
+                                              
         self._apply_finetune_strategy()
 
         self.bert_hidden_size = self.bert.config.hidden_size
         print(f"BERT hidden size: {self.bert_hidden_size}")
         
-        # A linear layer to project BERT's output to our desired hidden dimension
+                                                                                 
         if self.bert_hidden_size != hidden_dim:
             self.projection = nn.Linear(self.bert_hidden_size, hidden_dim)
             print(f"Added projection layer: {self.bert_hidden_size} -> {hidden_dim}")
@@ -47,16 +47,16 @@ class TextEncoder(nn.Module):
             self.projection = nn.Identity()
             print(f"No projection needed: {self.bert_hidden_size} dimensions")
         
-        # Add layer normalization for stability
+                                               
         self.layer_norm = nn.LayerNorm(hidden_dim)
         
-        # Always keep projection and layer norm trainable
+                                                         
         for param in self.projection.parameters():
             param.requires_grad = True
         for param in self.layer_norm.parameters():
             param.requires_grad = True
         
-        # Print parameter summary
+                                 
         self._print_parameter_summary()
     
     def _apply_finetune_strategy(self):
@@ -64,22 +64,22 @@ class TextEncoder(nn.Module):
         total_layers = len(self.bert.encoder.layer)
         
         if self.finetune_strategy == 'none':
-            # Freeze all BERT parameters
+                                        
             for param in self.bert.parameters():
                 param.requires_grad = False
             print("✅ Frozen all BERT parameters")
             
         elif self.finetune_strategy == 'minimal':
-            # Freeze all except last 2 layers + pooler
+                                                      
             for param in self.bert.parameters():
                 param.requires_grad = False
             
-            # Unfreeze last 2 layers
+                                    
             for layer_idx in range(max(0, total_layers - 2), total_layers):
                 for param in self.bert.encoder.layer[layer_idx].parameters():
                     param.requires_grad = True
             
-            # Unfreeze pooler for better sentence representations
+                                                                 
             if hasattr(self.bert, 'pooler') and self.bert.pooler is not None:
                 for param in self.bert.pooler.parameters():
                     param.requires_grad = True
@@ -87,16 +87,16 @@ class TextEncoder(nn.Module):
             print(f"✅ Fine-tuning last 2 layers (out of {total_layers}) + pooler")
             
         elif self.finetune_strategy == 'partial':
-            # Freeze all except last 4 layers + pooler
+                                                      
             for param in self.bert.parameters():
                 param.requires_grad = False
             
-            # Unfreeze last 4 layers
+                                    
             for layer_idx in range(max(0, total_layers - 4), total_layers):
                 for param in self.bert.encoder.layer[layer_idx].parameters():
                     param.requires_grad = True
             
-            # Unfreeze pooler
+                             
             if hasattr(self.bert, 'pooler') and self.bert.pooler is not None:
                 for param in self.bert.pooler.parameters():
                     param.requires_grad = True
@@ -104,7 +104,7 @@ class TextEncoder(nn.Module):
             print(f"✅ Fine-tuning last 4 layers (out of {total_layers}) + pooler")
             
         elif self.finetune_strategy == 'full':
-            # Fine-tune all layers
+                                  
             for param in self.bert.parameters():
                 param.requires_grad = True
             print(f"✅ Fine-tuning all {total_layers} layers")
@@ -130,8 +130,8 @@ class TextEncoder(nn.Module):
         print(f"   Projection trainable: {projection_trainable:,}")
         print(f"   LayerNorm trainable: {layernorm_trainable:,}")
         
-        # Memory estimate (rough)
-        memory_mb = (trainable_params * 4 * 3) / (1024 * 1024)  # 4 bytes per param, 3x for gradients/optimizer
+                                 
+        memory_mb = (trainable_params * 4 * 3) / (1024 * 1024)                                                 
         print(f"   Estimated training memory: ~{memory_mb:.1f} MB")
 
     def forward(self, text_list):
@@ -144,20 +144,20 @@ class TextEncoder(nn.Module):
         Returns:
             torch.Tensor: The encoded text as a sequence of hidden states.
         """
-        # Tokenize the input text with longer max length for more detailed descriptions
+                                                                                       
         inputs = self.tokenizer(text_list, return_tensors="pt", padding=True, truncation=True, max_length=256)
         
-        # Move inputs to the correct device
+                                           
         inputs = {k: v.to(self.bert.device) for k, v in inputs.items()}
         
-        # Get hidden states from BERT
+                                     
         outputs : BaseModelOutputWithPoolingAndCrossAttentions = self.bert(**inputs)
         bert_hidden_states = outputs.last_hidden_state
         
-        # Project the hidden states to the desired dimension
+                                                            
         projected_states = self.projection(bert_hidden_states)
         
-        # Apply layer normalization for stability
+                                                 
         normalized_states = self.layer_norm(projected_states)
         
         return normalized_states

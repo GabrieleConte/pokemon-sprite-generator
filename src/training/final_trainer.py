@@ -22,21 +22,21 @@ class NoiseScheduler:
     def __init__(self, num_timesteps: int = 1000, beta_start: float = 0.0001, beta_end: float = 0.02):
         self.num_timesteps = num_timesteps
         
-        # Linear schedule for betas
+                                   
         self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         
-        # Precompute values for sampling
+                                        
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
         
-        # Coefficients for reverse process
+                                          
         self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
         
-        # Posterior variance calculation
+                                        
         posterior_variance = self.betas * (1.0 - torch.cat([torch.tensor([1.0]), self.alphas_cumprod[:-1]])) / (1.0 - self.alphas_cumprod)
-        # Clamp to avoid 0 variance
+                                   
         self.posterior_variance = torch.clamp(posterior_variance, min=1e-20)
         
     def add_noise(self, x_0: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
@@ -54,15 +54,15 @@ class NoiseScheduler:
         device = x_t.device
         self.to(device)
         
-        # Coefficients for mean
+                               
         sqrt_recip_alpha = self.sqrt_recip_alphas[timestep]
         beta = self.betas[timestep]
         sqrt_one_minus_alpha_cumprod = self.sqrt_one_minus_alphas_cumprod[timestep]
         
-        # Compute mean
+                      
         mean = sqrt_recip_alpha * (x_t - beta * predicted_noise / sqrt_one_minus_alpha_cumprod)
         
-        # Add noise if not final step
+                                     
         if timestep > 0:
             variance = self.posterior_variance[timestep]
             noise = torch.randn_like(x_t)
@@ -90,23 +90,23 @@ class FinalPokemonGenerator(nn.Module):
     def __init__(self, vae_path: str, diffusion_path: str, text_encoder_config: Dict[str, Any]):
         super().__init__()
         
-        # Load pre-trained VAE components
+                                         
         vae_checkpoint = torch.load(vae_path, map_location='cpu')
         
-        # VAE Encoder (frozen)
+                              
         self.vae_encoder = VAEEncoder(
             input_channels=3,
-            latent_dim=text_encoder_config.get('latent_dim', 8)  # Fixed: should be 8, not 1024
+            latent_dim=text_encoder_config.get('latent_dim', 8)                                
         )
         
-        # VAE Decoder (frozen initially, will be unfrozen for fine-tuning)
+                                                                          
         self.vae_decoder = VAEDecoder(
-            latent_dim=text_encoder_config.get('latent_dim', 8),  # Fixed: should be 8, not 512
+            latent_dim=text_encoder_config.get('latent_dim', 8),                               
             text_dim=text_encoder_config['text_embedding_dim'],
             output_channels=3
         )
         
-        # Load VAE weights
+                          
         vae_state_dict = vae_checkpoint['vae_state_dict']
         encoder_state_dict = {}
         decoder_state_dict = {}
@@ -120,17 +120,17 @@ class FinalPokemonGenerator(nn.Module):
         self.vae_encoder.load_state_dict(encoder_state_dict)
         self.vae_decoder.load_state_dict(decoder_state_dict)
         
-        # Freeze VAE components initially
+                                         
         for param in self.vae_encoder.parameters():
             param.requires_grad = False
         for param in self.vae_decoder.parameters():
             param.requires_grad = False
         
-        # Load pre-trained U-Net
+                                
         diffusion_checkpoint = torch.load(diffusion_path, map_location='cpu')
         
         self.unet = UNet(
-            latent_dim=text_encoder_config.get('latent_dim', 8),  # Fixed: should be 8, not 512
+            latent_dim=text_encoder_config.get('latent_dim', 8),                               
             text_dim=text_encoder_config['text_embedding_dim'],
             time_emb_dim=text_encoder_config.get('time_emb_dim', 128),
             num_heads=text_encoder_config.get('num_heads', 8)
@@ -138,29 +138,29 @@ class FinalPokemonGenerator(nn.Module):
         
         self.unet.load_state_dict(diffusion_checkpoint['unet_state_dict'])
         
-        # Freeze U-Net initially
+                                
         for param in self.unet.parameters():
             param.requires_grad = False
         
-        # Text encoder (will be fine-tuned)
+                                           
         self.text_encoder = TextEncoder(
             model_name=text_encoder_config['bert_model'],
             hidden_dim=text_encoder_config['text_embedding_dim']
         )
         
-        # Load text encoder weights if available
+                                                
         if 'text_encoder_state_dict' in vae_checkpoint:
             self.text_encoder.load_state_dict(vae_checkpoint['text_encoder_state_dict'])
         
-        # Diffusion components
+                              
         self.noise_scheduler = NoiseScheduler(
             num_timesteps=text_encoder_config.get('num_timesteps', 1000),
             beta_start=text_encoder_config.get('beta_start', 0.0001),
             beta_end=text_encoder_config.get('beta_end', 0.02)
         )
         
-        # Latent dimension
-        self.latent_dim = text_encoder_config.get('latent_dim', 8)  # Fixed: should be 8, not 512
+                          
+        self.latent_dim = text_encoder_config.get('latent_dim', 8)                               
         
     def forward(self, text_list: List[str], num_inference_steps: int = 50, mode: str = 'generate') -> torch.Tensor:
         """
@@ -174,40 +174,40 @@ class FinalPokemonGenerator(nn.Module):
         Returns:
             Generated images [batch_size, 3, 215, 215]
         """
-        # Encode text
+                     
         text_emb = self.text_encoder(text_list)
         
         if mode == 'generate':
-            # Start from pure noise in latent space
+                                                   
             batch_size = text_emb.size(0)
-            latent = torch.randn(batch_size, self.latent_dim, 27, 27, device=text_emb.device)  # Fixed: 27x27, not 3x3
+            latent = torch.randn(batch_size, self.latent_dim, 27, 27, device=text_emb.device)                         
             
-            # Diffusion sampling
+                                
             step_size = max(1, self.noise_scheduler.num_timesteps // num_inference_steps)
             
             for i in range(num_inference_steps):
                 timestep = self.noise_scheduler.num_timesteps - 1 - i * step_size
                 timestep = max(0, timestep)
                 
-                # Create timestep tensor
+                                        
                 timesteps = torch.full((batch_size,), timestep, device=text_emb.device, dtype=torch.long)
                 
-                # Predict noise with U-Net
+                                          
                 with torch.no_grad():
                     predicted_noise = self.unet(latent, timesteps, text_emb)
                 
-                # Sample previous timestep
+                                          
                 if timestep > 0:
                     latent = self.noise_scheduler.sample_previous_timestep(latent, predicted_noise, timestep)
                 else:
-                    # Final step - just remove predicted noise
+                                                              
                     latent = latent - predicted_noise
         
-        else:  # reconstruct mode - use VAE encoder
-            # This would be used if we had input images to reconstruct
+        else:                                      
+                                                                      
             raise NotImplementedError("Reconstruction mode requires input images")
         
-        # Decode latent to image using VAE decoder
+                                                  
         generated = self.vae_decoder(latent, text_emb)
         
         return generated
@@ -223,14 +223,14 @@ class FinalPokemonGenerator(nn.Module):
         Returns:
             Reconstructed images [batch_size, 3, 215, 215]
         """
-        # Encode text
+                     
         text_emb = self.text_encoder(text_list)
         
-        # Encode images to latent space
+                                       
         with torch.no_grad():
             latent, _, _ = self.vae_encoder(images)
         
-        # Decode latent to image using VAE decoder
+                                                  
         reconstructed = self.vae_decoder(latent, text_emb)
         
         return reconstructed
@@ -280,33 +280,33 @@ class FinalTrainer:
         self.diffusion_checkpoint_path = diffusion_checkpoint_path
         self.experiment_name = experiment_name
         
-        # Setup device
+                      
         self.device = get_device()
         print(f"Using device: {self.device}")
         
-        # Setup directories
+                           
         self.setup_directories()
         
-        # Setup logging
+                       
         self.setup_logging()
         
-        # Setup model
+                     
         self.setup_model()
         
-        # Setup data loaders
+                            
         self.setup_data_loaders()
         
-        # Setup optimization
+                            
         self.setup_optimization()
         
-        # Setup monitoring
+                          
         self.setup_monitoring()
         
-        # Training state
+                        
         self.current_epoch = 0
         self.global_step = 0
         self.best_val_loss = float('inf')
-        self.training_phase = 'text_encoder'  # 'text_encoder' or 'joint'
+        self.training_phase = 'text_encoder'                             
         
     def setup_directories(self):
         """Create necessary directories for saving results."""
@@ -334,14 +334,14 @@ class FinalTrainer:
         """Initialize the final model."""
         model_config = self.config['model']
         
-        # Create final generator
+                                
         self.generator = FinalPokemonGenerator(
             vae_path=self.vae_checkpoint_path,
             diffusion_path=self.diffusion_checkpoint_path,
             text_encoder_config=model_config
         ).to(self.device)
         
-        # CLIP loss for text-image alignment
+                                            
         self.clip_loss = CLIPLoss(
             device=str(self.device)
         ).to(self.device)
@@ -379,7 +379,7 @@ class FinalTrainer:
         """Setup optimizer and learning rate scheduler."""
         opt_config = self.config['optimization']
         
-        # Different learning rates for different components
+                                                           
         param_groups = [
             {
                 'params': self.generator.text_encoder.parameters(),
@@ -388,7 +388,7 @@ class FinalTrainer:
             }
         ]
         
-        # Optimizer
+                   
         if opt_config['optimizer'] == 'adam':
             self.optimizer = optim.Adam(
                 param_groups,
@@ -400,7 +400,7 @@ class FinalTrainer:
                 weight_decay=opt_config['weight_decay']
             )
         
-        # Learning rate scheduler
+                                 
         if opt_config['scheduler'] == 'cosine':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
@@ -413,22 +413,22 @@ class FinalTrainer:
                 gamma=opt_config['gamma']
             )
         
-        # Loss function
+                       
         self.criterion = nn.MSELoss()
         self.l1_loss = nn.L1Loss()
         
     def setup_monitoring(self):
         """Setup monitoring and logging tools."""
-        # TensorBoard writer
+                            
         self.tb_writer = SummaryWriter(log_dir=self.log_dir / 'tensorboard')
     
     def compute_generation_loss(self, generated_images: torch.Tensor, target_images: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """Compute generation loss."""
-        # Combined L1 and MSE loss
+                                  
         l1_loss = self.l1_loss(generated_images, target_images)
         mse_loss = self.criterion(generated_images, target_images)
         
-        # Weighted combination
+                              
         total_loss = l1_loss + 0.1 * mse_loss
         
         loss_dict = {
@@ -446,7 +446,7 @@ class FinalTrainer:
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         """Train for one epoch."""
         self.generator.train()
-        # CLIP loss is always in eval mode (frozen)
+                                                   
         self.clip_loss.eval()
         
         total_loss = 0.0
@@ -459,24 +459,24 @@ class FinalTrainer:
             images = batch['image'].to(self.device)
             descriptions = batch['full_description']
             
-            # Forward pass - use encode_and_decode for training (reconstruction)
+                                                                                
             reconstructed_images = self.generator.encode_and_decode(images, descriptions)
             
-            # Compute generation loss
+                                     
             gen_loss, gen_loss_dict = self.compute_generation_loss(reconstructed_images, images)
             
-            # Compute CLIP alignment loss
+                                         
             clip_loss = self.clip_loss(reconstructed_images, descriptions)
             
-            # Combined loss
+                           
             clip_weight = self.config['training'].get('clip_weight', 0.1)
             total_loss_value = gen_loss + clip_weight * clip_loss
             
-            # Backward pass
+                           
             self.optimizer.zero_grad()
             total_loss_value.backward()
             
-            # Gradient clipping (only for trainable parameters)
+                                                               
             torch.nn.utils.clip_grad_norm_(
                 self.generator.parameters(), 
                 max_norm=1.0
@@ -484,13 +484,13 @@ class FinalTrainer:
             
             self.optimizer.step()
             
-            # Update metrics
+                            
             total_loss += total_loss_value.item()
             total_l1_loss += gen_loss_dict['l1_loss']
             total_mse_loss += gen_loss_dict['mse_loss']
             total_clip_loss += clip_loss.item()
             
-            # Log progress
+                          
             if batch_idx % self.config['training']['log_every'] == 0:
                 self.logger.info(f'Epoch {epoch}, Batch {batch_idx}/{num_batches}, '
                                f'Phase: {self.training_phase}, '
@@ -500,7 +500,7 @@ class FinalTrainer:
             
             self.global_step += 1
         
-        # Calculate average losses
+                                  
         avg_loss = total_loss / num_batches
         avg_l1_loss = total_l1_loss / num_batches
         avg_mse_loss = total_mse_loss / num_batches
@@ -527,18 +527,18 @@ class FinalTrainer:
                 images = batch['image'].to(self.device)
                 descriptions = batch['full_description']
                 
-                # Forward pass - use encode_and_decode for validation
+                                                                     
                 reconstructed_images = self.generator.encode_and_decode(images, descriptions)
                 
-                # Compute loss
+                              
                 loss, loss_dict = self.compute_generation_loss(reconstructed_images, images)
                 
-                # Update metrics
+                                
                 total_loss += loss_dict['total_loss']
                 total_l1_loss += loss_dict['l1_loss']
                 total_mse_loss += loss_dict['mse_loss']
         
-        # Calculate average losses
+                                  
         avg_loss = total_loss / num_batches
         avg_l1_loss = total_l1_loss / num_batches
         avg_mse_loss = total_mse_loss / num_batches
@@ -553,7 +553,7 @@ class FinalTrainer:
         """Generate sample images for monitoring."""
         self.generator.eval()
         
-        # Get a batch of validation data
+                                        
         val_batch = next(iter(self.data_loaders['val']))
         descriptions = val_batch['full_description'][:num_samples]
         real_images = val_batch['image'][:num_samples]
@@ -561,20 +561,20 @@ class FinalTrainer:
         with torch.no_grad():
             generated_images = self.generator(descriptions)
         
-        # Convert to numpy and denormalize
+                                          
         real_images = self.denormalize_images(real_images)
         generated_images = self.denormalize_images(generated_images)
         
-        # Create comparison grid
+                                
         fig, axes = plt.subplots(2, num_samples, figsize=(num_samples * 3, 6))
         
         for i in range(num_samples):
-            # Real image
+                        
             axes[0, i].imshow(real_images[i].permute(1, 2, 0).cpu().numpy())
             axes[0, i].set_title('Real')
             axes[0, i].axis('off')
             
-            # Generated image
+                             
             axes[1, i].imshow(generated_images[i].permute(1, 2, 0).cpu().numpy())
             axes[1, i].set_title('Generated')
             axes[1, i].axis('off')
@@ -583,7 +583,7 @@ class FinalTrainer:
         plt.savefig(self.sample_dir / f'final_epoch_{epoch:04d}.png', dpi=150, bbox_inches='tight')
         plt.close()
         
-        # Log to tensorboard
+                            
         self.tb_writer.add_images('Real_Images', real_images, epoch)
         self.tb_writer.add_images('Generated_Images', generated_images, epoch)
     
@@ -591,12 +591,12 @@ class FinalTrainer:
         """Switch to joint training mode - unfreeze all parameters."""
         self.logger.info("Switching to joint training mode - unfreezing all parameters")
         
-        # Unfreeze all components
+                                 
         self.generator.unfreeze_vae_decoder()
         self.generator.unfreeze_unet()
         self.training_phase = 'joint'
         
-        # Create new optimizer with all parameters
+                                                  
         opt_config = self.config['optimization']
         param_groups = [
             {
@@ -616,7 +616,7 @@ class FinalTrainer:
             }
         ]
         
-        # Create new optimizer
+                              
         if opt_config['optimizer'] == 'adam':
             self.optimizer = optim.Adam(
                 param_groups,
@@ -628,7 +628,7 @@ class FinalTrainer:
                 weight_decay=opt_config['weight_decay']
             )
         
-        # Recreate scheduler
+                            
         if opt_config['scheduler'] == 'cosine':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
@@ -654,20 +654,20 @@ class FinalTrainer:
             'training_phase': self.training_phase
         }
         
-        # # Save regular checkpoint
-        # torch.save(checkpoint, self.checkpoint_dir / f'final_checkpoint_epoch_{epoch:04d}.pth')
+                                   
+                                                                                                 
         
-        # Save best model
+                         
         if is_best:
             torch.save(checkpoint, self.checkpoint_dir / 'final_best_model.pth')
             self.logger.info(f'Saved best model at epoch {epoch}')
         
-        # # Keep only recent checkpoints
-        # checkpoints = list(self.checkpoint_dir.glob('final_checkpoint_epoch_*.pth'))
-        # if len(checkpoints) > 2:
-        #     checkpoints.sort()
-        #     for old_checkpoint in checkpoints[:-2]:
-        #         old_checkpoint.unlink()
+                                        
+                                                                                      
+                                  
+                                
+                                                     
+                                         
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load model checkpoint."""
@@ -689,26 +689,26 @@ class FinalTrainer:
         """Main training loop."""
         self.logger.info(f'Starting final training for {self.config["training"]["final_epochs"]} epochs')
         
-        # Phase 1: Train only text encoder
+                                          
         phase1_epochs = self.config['training'].get('phase1_epochs', self.config['training']['final_epochs'] // 2)
         
         for epoch in range(self.current_epoch, self.config['training']['final_epochs']):
             self.logger.info(f'Epoch {epoch + 1}/{self.config["training"]["final_epochs"]}')
             
-            # Switch to joint training at specified epoch
+                                                         
             if epoch == phase1_epochs and self.training_phase == 'text_encoder':
                 self.switch_to_joint_training()
             
-            # Train
+                   
             train_metrics = self.train_epoch(epoch)
             
-            # Validate
+                      
             val_metrics = self.validate_epoch(epoch)
             
-            # Update learning rate
+                                  
             self.scheduler.step()
             
-            # Log metrics
+                         
             self.logger.info(f'Phase: {self.training_phase}')
             self.logger.info(f'Train - Loss: {train_metrics["loss"]:.4f}, '
                            f'L1: {train_metrics["l1_loss"]:.4f}, '
@@ -718,7 +718,7 @@ class FinalTrainer:
                            f'L1: {val_metrics["l1_loss"]:.4f}, '
                            f'MSE: {val_metrics["mse_loss"]:.4f}')
             
-            # TensorBoard logging
+                                 
             self.tb_writer.add_scalar('Final Train/Loss', train_metrics['loss'], epoch)
             self.tb_writer.add_scalar('Final Train/L1_Loss', train_metrics['l1_loss'], epoch)
             self.tb_writer.add_scalar('Final Train/MSE_Loss', train_metrics['mse_loss'], epoch)
@@ -727,11 +727,11 @@ class FinalTrainer:
             self.tb_writer.add_scalar('Final Val/L1_Loss', val_metrics['l1_loss'], epoch)
             self.tb_writer.add_scalar('Final Val/MSE_Loss', val_metrics['mse_loss'], epoch)
             
-            # Generate samples
+                              
             if epoch % self.config['training']['sample_every'] == 0:
                 self.generate_samples(epoch)
             
-            # Save checkpoint
+                             
             is_best = val_metrics['loss'] < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_metrics['loss']
@@ -754,17 +754,17 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Load configuration
+                        
     config_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/config/train_config.yaml"
     config = load_config(config_path)
     
-    # Path to pre-trained VAE model
+                                   
     vae_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments/pokemon_vae_stage1/checkpoints/vae_best_model.pth"
     
-    # Path to pre-trained diffusion model
+                                         
     diffusion_checkpoint_path = "/Users/gabrieleconte/Developer/pokemon-sprite-generator/experiments/pokemon_diffusion_stage2/checkpoints/diffusion_best_model.pth"
     
-    # Create final trainer
+                          
     trainer = FinalTrainer(
         config=config,
         vae_checkpoint_path=vae_checkpoint_path,
@@ -772,5 +772,5 @@ if __name__ == "__main__":
         experiment_name="pokemon_final_stage3"
     )
     
-    # Start training
+                    
     trainer.train()

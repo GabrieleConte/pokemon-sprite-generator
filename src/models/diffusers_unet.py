@@ -27,7 +27,7 @@ class DiffusersUNet(nn.Module):
         latent_dim: int = 8,
         text_dim: int = 256,
         pretrained_model_name: str = "runwayml/stable-diffusion-v1-5",
-        cross_attention_dim: int = 768,  # Standard SD cross-attention dim
+        cross_attention_dim: int = 768,                                   
         attention_head_dim: int = 8,
         use_flash_attention: bool = True,
         freeze_encoder: bool = False,
@@ -55,7 +55,7 @@ class DiffusersUNet(nn.Module):
         
         print(f"Loading pre-trained U-Net from {pretrained_model_name}...")
         
-        # Load the pre-trained U-Net
+                                    
         self.unet = UNet2DConditionModel.from_pretrained(
             pretrained_model_name,
             subfolder="unet",
@@ -64,9 +64,9 @@ class DiffusersUNet(nn.Module):
         
         print(f"✅ Loaded pre-trained U-Net with {sum(p.numel() for p in self.unet.parameters()):,} parameters")
         
-        # Adapt input/output channels if needed
-        original_in_channels = getattr(self.unet.config, 'in_channels', 4)  # SD default is 4
-        original_out_channels = getattr(self.unet.config, 'out_channels', 4)  # SD default is 4
+                                               
+        original_in_channels = getattr(self.unet.config, 'in_channels', 4)                   
+        original_out_channels = getattr(self.unet.config, 'out_channels', 4)                   
         
         if original_in_channels != latent_dim:
             print(f"Adapting input channels: {original_in_channels} -> {latent_dim}")
@@ -76,27 +76,27 @@ class DiffusersUNet(nn.Module):
             print(f"Adapting output channels: {original_out_channels} -> {latent_dim}")
             self._adapt_output_channels(original_out_channels, latent_dim)
         
-        # Add text dimension adaptation layer
-        # SD expects 768-dim cross attention, but our text encoder now outputs 1024-dim (BERT-large)
+                                             
+                                                                                                    
         if text_dim != cross_attention_dim:
             print(f"Adding text projection layer: {text_dim} -> {cross_attention_dim}")
             self.text_projection = nn.Linear(text_dim, cross_attention_dim)
-            # Initialize with Xavier uniform for better training stability with larger embeddings
-            nn.init.xavier_uniform_(self.text_projection.weight, gain=0.02)  # Slightly higher gain for 1024->768
+                                                                                                 
+            nn.init.xavier_uniform_(self.text_projection.weight, gain=0.02)                                      
             nn.init.zeros_(self.text_projection.bias)
             
-            # Add layer normalization for additional stability
+                                                              
             self.text_layer_norm = nn.LayerNorm(cross_attention_dim, eps=1e-6)
         else:
             print("Text dimensions match - no projection needed")
             self.text_projection = nn.Identity()
             self.text_layer_norm = nn.Identity()
         
-        # Set up flash attention if requested
+                                             
         if use_flash_attention:
             self._setup_flash_attention()
         
-        # Configure training mode based on freezing parameters
+                                                              
         if freeze_encoder and freeze_decoder:
             self.configure_training_mode("cross_attention_only")
         elif freeze_encoder and not freeze_decoder:
@@ -104,14 +104,14 @@ class DiffusersUNet(nn.Module):
         else:
             self.configure_training_mode("full")
         
-        # Print detailed training summary
+                                         
         self.print_training_summary()
         
     def _adapt_input_channels(self, original_channels: int, target_channels: int):
         """Adapt the input convolution to handle different channel counts."""
         original_conv = self.unet.conv_in
         
-        # Convert kernel/stride/padding to proper format
+                                                        
         kernel_size = original_conv.kernel_size
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
@@ -132,13 +132,13 @@ class DiffusersUNet(nn.Module):
         elif isinstance(padding, tuple) and len(padding) == 1:
             padding = (padding[0], padding[0])
         elif isinstance(padding, str):
-            # Keep string padding as-is for special cases like 'same'
+                                                                     
             pass
         else:
-            # Default fallback
+                              
             padding = (1, 1)
         
-        # Create new convolution with target channels
+                                                     
         new_conv = nn.Conv2d(
             target_channels,
             original_conv.out_channels,
@@ -148,13 +148,13 @@ class DiffusersUNet(nn.Module):
             bias=original_conv.bias is not None
         )
         
-        # Initialize with pre-trained weights (average across channels if needed)
+                                                                                 
         with torch.no_grad():
             if target_channels <= original_channels:
-                # Use subset of channels
+                                        
                 new_conv.weight.data = original_conv.weight.data[:, :target_channels, :, :]
             else:
-                # Repeat channels and normalize
+                                               
                 repeat_factor = target_channels // original_channels
                 remainder = target_channels % original_channels
                 
@@ -169,14 +169,14 @@ class DiffusersUNet(nn.Module):
             if new_conv.bias is not None and original_conv.bias is not None:
                 new_conv.bias.data = original_conv.bias.data.clone()
         
-        # Replace the layer
+                           
         self.unet.conv_in = new_conv
         
     def _adapt_output_channels(self, original_channels: int, target_channels: int):
         """Adapt the output convolution to handle different channel counts."""
         original_conv = self.unet.conv_out
         
-        # Convert kernel/stride/padding to proper format
+                                                        
         kernel_size = original_conv.kernel_size
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
@@ -197,13 +197,13 @@ class DiffusersUNet(nn.Module):
         elif isinstance(padding, tuple) and len(padding) == 1:
             padding = (padding[0], padding[0])
         elif isinstance(padding, str):
-            # Keep string padding as-is for special cases like 'same'
+                                                                     
             pass
         else:
-            # Default fallback
+                              
             padding = (1, 1)
         
-        # Create new convolution with target channels
+                                                     
         new_conv = nn.Conv2d(
             original_conv.in_channels,
             target_channels,
@@ -213,15 +213,15 @@ class DiffusersUNet(nn.Module):
             bias=original_conv.bias is not None
         )
         
-        # Initialize with pre-trained weights
+                                             
         with torch.no_grad():
             if target_channels <= original_channels:
-                # Use subset of channels
+                                        
                 new_conv.weight.data = original_conv.weight.data[:target_channels, :, :, :]
                 if new_conv.bias is not None and original_conv.bias is not None:
                     new_conv.bias.data = original_conv.bias.data[:target_channels]
             else:
-                # Repeat channels and normalize
+                                               
                 repeat_factor = target_channels // original_channels
                 remainder = target_channels % original_channels
                 
@@ -242,13 +242,13 @@ class DiffusersUNet(nn.Module):
                 if new_conv.bias is not None and len(bias_parts) > 0:
                     new_conv.bias.data = torch.cat(bias_parts, dim=0) / repeat_factor
         
-        # Replace the layer
+                           
         self.unet.conv_out = new_conv
     
     def _setup_flash_attention(self):
         """Setup flash attention for better performance."""
         try:
-            # Set attention processor to use flash attention
+                                                            
             self.unet.set_attn_processor(AttnProcessor2_0())
             print("Flash attention enabled")
         except Exception as e:
@@ -257,52 +257,52 @@ class DiffusersUNet(nn.Module):
     def _freeze_encoder(self):
         """Freeze the encoder part of the U-Net."""
         print("Freezing U-Net encoder...")
-        # Freeze down blocks and mid block
+                                          
         for param in self.unet.down_blocks.parameters():
             param.requires_grad = False
         for param in self.unet.mid_block.parameters():
             param.requires_grad = False
-        # Keep conv_in trainable for channel adaptation
+                                                       
         
     def _freeze_decoder(self):
         """Freeze the decoder part of the U-Net."""
         print("Freezing U-Net decoder...")
-        # Freeze up blocks
+                          
         for param in self.unet.up_blocks.parameters():
             param.requires_grad = False
-        # Keep conv_out trainable for channel adaptation
+                                                        
     
     def _unfreeze_cross_attention_layers(self):
         """Unfreeze cross-attention layers for text conditioning fine-tuning."""
         print("Ensuring cross-attention layers are trainable...")
         
-        # Helper function to unfreeze cross-attention in a block
+                                                                
         def unfreeze_cross_attn_in_block(block):
             if hasattr(block, 'attentions') and block.attentions is not None:
                 for attention_module in block.attentions:
                     if hasattr(attention_module, 'transformer_blocks'):
                         for transformer_block in attention_module.transformer_blocks:
-                            # Unfreeze cross-attention (attn2)
+                                                              
                             if hasattr(transformer_block, 'attn2'):
                                 for param in transformer_block.attn2.parameters():
                                     param.requires_grad = True
-                            # Also unfreeze the cross-attention norm
+                                                                    
                             if hasattr(transformer_block, 'norm2'):
                                 for param in transformer_block.norm2.parameters():
                                     param.requires_grad = True
         
-        # Unfreeze cross-attention in down blocks
+                                                 
         for down_block in self.unet.down_blocks:
             unfreeze_cross_attn_in_block(down_block)
         
-        # Unfreeze cross-attention in mid block
+                                               
         unfreeze_cross_attn_in_block(self.unet.mid_block)
         
-        # Unfreeze cross-attention in up blocks
+                                               
         for up_block in self.unet.up_blocks:
             unfreeze_cross_attn_in_block(up_block)
         
-        # Count trainable cross-attention parameters
+                                                    
         cross_attn_params = 0
         for name, param in self.unet.named_parameters():
             if ('attn2' in name or 'norm2' in name) and param.requires_grad:
@@ -320,7 +320,7 @@ class DiffusersUNet(nn.Module):
         print(f"Configuring training mode: {mode}")
         
         if mode == "full":
-            # Train everything
+                              
             for param in self.unet.parameters():
                 param.requires_grad = True
             for param in self.text_projection.parameters():
@@ -328,14 +328,14 @@ class DiffusersUNet(nn.Module):
             print("✅ Full model training enabled")
             
         elif mode == "cross_attention_only":
-            # Freeze everything first
+                                     
             for param in self.unet.parameters():
                 param.requires_grad = False
-            # Then unfreeze only cross-attention and our projection layer
+                                                                         
             self._unfreeze_cross_attention_layers()
             for param in self.text_projection.parameters():
                 param.requires_grad = True
-            # Keep input/output convolutions trainable for channel adaptation
+                                                                             
             for param in self.unet.conv_in.parameters():
                 param.requires_grad = True
             for param in self.unet.conv_out.parameters():
@@ -343,7 +343,7 @@ class DiffusersUNet(nn.Module):
             print("✅ Cross-attention only training enabled")
             
         elif mode == "decoder_only":
-            # Freeze encoder, train decoder
+                                           
             for param in self.unet.down_blocks.parameters():
                 param.requires_grad = False
             for param in self.unet.mid_block.parameters():
@@ -355,7 +355,7 @@ class DiffusersUNet(nn.Module):
             self._unfreeze_cross_attention_layers()
             print("✅ Decoder-only training enabled")
             
-        # Always ensure our text projection is trainable
+                                                        
         for param in self.text_projection.parameters():
             param.requires_grad = True
         for param in self.text_layer_norm.parameters():
@@ -380,7 +380,7 @@ class DiffusersUNet(nn.Module):
         Returns:
             predicted_noise: [batch_size, 8, 27, 27] predicted noise
         """
-        # Ensure inputs are on the correct device and dtype
+                                                           
         device = next(self.parameters()).device
         dtype = next(self.parameters()).dtype
         
@@ -388,43 +388,43 @@ class DiffusersUNet(nn.Module):
         timesteps = timesteps.to(device=device)
         text_emb = text_emb.to(device=device, dtype=dtype)
         
-        # Check for NaN/Inf in inputs and handle gracefully
+                                                           
         if torch.isnan(noisy_latent).any() or torch.isinf(noisy_latent).any():
             print(f"⚠️ Warning: NaN/Inf detected in noisy_latent input")
             noisy_latent = torch.nan_to_num(noisy_latent, nan=0.0, posinf=1.0, neginf=-1.0)
-            # Also clamp to reasonable range
+                                            
             noisy_latent = torch.clamp(noisy_latent, min=-10.0, max=10.0)
         
         if torch.isnan(text_emb).any() or torch.isinf(text_emb).any():
             print(f"⚠️ Warning: NaN/Inf detected in text_emb input")
             text_emb = torch.nan_to_num(text_emb, nan=0.0, posinf=1.0, neginf=-1.0)
-            # Also clamp to reasonable range
+                                            
             text_emb = torch.clamp(text_emb, min=-10.0, max=10.0)
         
-        # Validate input shapes
+                               
         batch_size = noisy_latent.shape[0]
-        assert noisy_latent.shape == (batch_size, self.latent_dim, 27, 27), \
+        assert noisy_latent.shape == (batch_size, self.latent_dim, 27, 27),\
             f"Expected noisy_latent shape [{batch_size}, {self.latent_dim}, 27, 27], got {noisy_latent.shape}"
-        assert timesteps.shape == (batch_size,), \
+        assert timesteps.shape == (batch_size,),\
             f"Expected timesteps shape [{batch_size}], got {timesteps.shape}"
-        assert text_emb.shape[0] == batch_size and text_emb.shape[2] == self.text_dim, \
+        assert text_emb.shape[0] == batch_size and text_emb.shape[2] == self.text_dim,\
             f"Expected text_emb shape [{batch_size}, seq_len, {self.text_dim}], got {text_emb.shape}"
         
-        # Project text embeddings to the expected dimension with stability
+                                                                          
         projected_text_emb = self.text_projection(text_emb)
         
-        # Apply layer normalization for stability
+                                                 
         projected_text_emb = self.text_layer_norm(projected_text_emb)
         
-        # Clamp projected embeddings to prevent extreme values
+                                                              
         projected_text_emb = torch.clamp(projected_text_emb, min=-10.0, max=10.0)
         
-        # Check for NaN/Inf after projection
+                                            
         if torch.isnan(projected_text_emb).any() or torch.isinf(projected_text_emb).any():
             print(f"⚠️ Warning: NaN/Inf detected in projected text embeddings")
             projected_text_emb = torch.nan_to_num(projected_text_emb, nan=0.0, posinf=1.0, neginf=-1.0)
         
-        # Call the pre-trained U-Net with error handling
+                                                        
         try:
             output = self.unet(
                 sample=noisy_latent,
@@ -433,22 +433,22 @@ class DiffusersUNet(nn.Module):
                 return_dict=False
             )
             
-            # Extract the sample from the output
+                                                
             if isinstance(output, tuple):
                 predicted_noise = output[0]
             else:
                 predicted_noise = output
             
-            # Check for NaN/Inf in output and handle
+                                                    
             if torch.isnan(predicted_noise).any() or torch.isinf(predicted_noise).any():
                 print(f"⚠️ Warning: NaN/Inf detected in U-Net output")
                 predicted_noise = torch.nan_to_num(predicted_noise, nan=0.0, posinf=1.0, neginf=-1.0)
             
-            # Clamp output to reasonable range
+                                              
             predicted_noise = torch.clamp(predicted_noise, min=-50.0, max=50.0)
             
-            # Ensure output shape is correct
-            assert predicted_noise.shape == noisy_latent.shape, \
+                                            
+            assert predicted_noise.shape == noisy_latent.shape,\
                 f"Output shape {predicted_noise.shape} doesn't match input shape {noisy_latent.shape}"
             
             return predicted_noise
@@ -479,11 +479,11 @@ class DiffusersUNet(nn.Module):
         print(f"Frozen parameters: {total_params - trainable_params:,}")
         print(f"Trainable ratio: {trainable_params/total_params:.1%}")
         
-        # Check specific components
+                                   
         cross_attn_params = sum(p.numel() for name, p in self.unet.named_parameters() 
                                if ('attn2' in name or 'norm2' in name) and p.requires_grad)
         text_proj_params = sum(p.numel() for p in self.text_projection.parameters() if p.requires_grad)
-        conv_params = sum(p.numel() for p in self.unet.conv_in.parameters() if p.requires_grad) + \
+        conv_params = sum(p.numel() for p in self.unet.conv_in.parameters() if p.requires_grad) +\
                      sum(p.numel() for p in self.unet.conv_out.parameters() if p.requires_grad)
         
         print(f"\nComponent breakdown:")
